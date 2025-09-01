@@ -2,7 +2,7 @@
 name = "markdown_view_leptos"
 version = "0.1.0"
 edition = "2021"
-description = "Compile-time Markdown to Leptos view! with MDX-like inline components ({{ <Comp/> }}); supports file/url sources and code-fence-aware parsing."
+description = "Render Markdown with embedded Leptos components via a simple macro (MDX-like for Leptos)."
 license = "MIT"
 authors = ["Victor Ferreira da Silva <hi@victorfds.com>"]
 repository = "https://github.com/victorfds/markdown_view_leptos"
