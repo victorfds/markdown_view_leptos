@@ -1,0 +1,33 @@
+[package]
+name = "markdown_view_leptos"
+version = "0.1.0"
+edition = "2021"
+description = "Compile-time Markdown to Leptos view! with MDX-like inline components ({{ <Comp/> }}); supports file/url sources and code-fence-aware parsing."
+license = "MIT"
+authors = ["Victor Ferreira da Silva <hi@victorfds.com>"]
+repository = "https://github.com/victorfds/markdown_view_leptos"
+documentation = "https://docs.rs/markdown_view_leptos"
+readme = "README.md"
+keywords = ["leptos", "markdown", "mdx", "ssr", "wasm"]
+categories = ["web-programming", "template-engine", "wasm"]
+
+exclude = ["examples/**/*"]
+
+[lib]
+proc-macro = true
+
+[dependencies]
+syn = { default-features = false, version = "2.0", features = [
+    "full",
+    "parsing",
+    "proc-macro",
+] }
+quote = "1.0"
+proc-macro2 = "1.0"
+pulldown-cmark = { version = "0.13.0", default-features = false, features = [
+    "html",
+] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "blocking",
+    "rustls-tls",
+] }
