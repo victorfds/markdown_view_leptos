@@ -32,8 +32,7 @@ fn Hello() -> impl IntoView {
 
 #[component]
 pub fn App() -> impl IntoView {
-    // Embed a real component inside Markdown using {{ <Hello/> }}
-    let md = r#"
+    view! { <main>{markdown_view!(r#"
 # Title
 
 Some text before the component.
@@ -41,10 +40,16 @@ Some text before the component.
 {{ <Hello/> }}
 
 And some text after.
-"#;
-
-    view! { <main>{markdown_view!(md)}</main> }
+"#)}</main> }
 }
+```
+
+### Dynamic `String` input
+You can also pass a `String`/`&str` variable to the macro. Dynamic inputs render Markdown at runtime without expanding inline components inside `{{ ... }}`.
+
+```rust
+let markdown_body = load_markdown_from_disk();
+let view = markdown_view!(markdown_body);
 ```
 
 ## From a File
@@ -84,9 +89,47 @@ pub fn App() -> impl IntoView {
 ## How it works
 
 - Markdown → HTML: Parsed with `pulldown‑cmark` (tables, footnotes, strikethrough, task lists). Injected via `inner_html` into a `view!` tree.
-- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree. The snippet must be valid in scope (e.g., `<MyComp/>`).
+- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree (for compile-time sources: string literal, `file`, or `url`). Dynamic `String` inputs render as plain Markdown without expanding `{{ ... }}`.
 - Fenced code: Triple‑backtick fences (```) are respected; `{{ ... }}` inside them is ignored and rendered literally.
 - Parse fallback: If a snippet inside `{{ ... }}` doesn’t parse, it is rendered as plain Markdown so your build doesn’t fail unexpectedly.
+- Front matter: Pass `strip_front_matter = true` to drop a leading `--- ... ---` block (YAML-style) before rendering if you don't want it to show up.
+
+## Options: strip front matter
+
+When your Markdown carries YAML front matter, prefix the macro with `strip_front_matter = true` before the source.
+
+```rust
+use leptos::prelude::*;
+use markdown_view_leptos::markdown_view;
+
+#[component]
+pub fn Article() -> impl IntoView {
+    view! {
+        <article>
+            {markdown_view!(
+                strip_front_matter = true,
+                file = "content/hello-world.md"
+            )}
+        </article>
+    }
+}
+```
+
+The flag also works with inline strings:
+
+```rust
+let view = markdown_view!(
+    strip_front_matter = true,
+    r#"---
+title: Hello World
+---
+
+# Hello World
+
+Body text goes here.
+"#
+);
+```
 
 ## Example
 

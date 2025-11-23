@@ -1,6 +1,6 @@
 [package]
 name = "markdown_view_leptos"
-version = "0.1.1"
+version = "0.1.2"
 edition = "2021"
 description = "Render Markdown with embedded Leptos components via a simple macro (MDX-like for Leptos)."
 license = "MIT"
@@ -13,21 +13,8 @@ categories = ["web-programming", "template-engine", "wasm"]
 
 exclude = ["examples/**/*"]
 
-[lib]
-proc-macro = true
-
 [dependencies]
-syn = { default-features = false, version = "2.0", features = [
-    "full",
-    "parsing",
-    "proc-macro",
-] }
-quote = "1.0"
-proc-macro2 = "1.0"
+markdown_view_leptos_macro = { path = "markdown_view_leptos_macro" }
 pulldown-cmark = { version = "0.13.0", default-features = false, features = [
     "html",
-] }
-reqwest = { version = "0.12", default-features = false, features = [
-    "blocking",
-    "rustls-tls",
 ] }
