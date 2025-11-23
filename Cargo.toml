@@ -14,7 +14,7 @@ categories = ["web-programming", "template-engine", "wasm"]
 exclude = ["examples/**/*"]
 
 [dependencies]
-markdown_view_leptos_macro = { path = "markdown_view_leptos_macro" }
+markdown_view_leptos_macro = { version = "0.1.2", path = "markdown_view_leptos_macro" }
 pulldown-cmark = { version = "0.13.0", default-features = false, features = [
     "html",
 ] }
