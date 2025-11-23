@@ -49,7 +49,8 @@ pub fn ParticleText() -> impl IntoView {
                     .unwrap();
 
                 // Build initial particles from text
-                let mut pts = build_particles_from_text("Leptos is awesome!", width as u32, height as u32);
+                let mut pts =
+                    build_particles_from_text("Leptos is awesome!", width as u32, height as u32);
                 if pts.is_empty() {
                     pts.push(Particle {
                         home_x: width / 2.0,
@@ -213,14 +214,7 @@ fn start_animation_loop(
     // Kick off the loop
     web_sys::window()
         .unwrap()
-        .request_animation_frame(
-            raf_cell
-                .borrow()
-                .as_ref()
-                .unwrap()
-                .as_ref()
-                .unchecked_ref(),
-        )
+        .request_animation_frame(raf_cell.borrow().as_ref().unwrap().as_ref().unchecked_ref())
         .unwrap();
 
     // Leak the cell to keep the RAF closure alive for the app lifetime.

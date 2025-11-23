@@ -46,10 +46,11 @@ use std::fs;
 use std::path::PathBuf;
 use syn::{
     parse::{Parse, ParseStream},
-    parse_macro_input, Ident, Lit, LitStr, Token,
+    parse_macro_input, Expr, ExprLit, Ident, Lit, LitStr, Token,
 };
 
-fn convert_markdown_to_html(markdown: &str) -> String {
+fn convert_markdown_to_html(markdown: impl AsRef<str>) -> String {
+    let markdown = markdown.as_ref();
     if markdown.trim().is_empty() {
         return String::new();
     }
@@ -78,7 +79,8 @@ enum Segment {
 ///   lines. They are parsed as Rust/RSX tokens.
 /// - Content between triple backtick fences (```lang) is treated as plain
 ///   Markdown; any `{{`/`}}` inside code fences are ignored.
-fn split_markdown_with_components(input: &str) -> Vec<Segment> {
+fn split_markdown_with_components(input: impl AsRef<str>) -> Vec<Segment> {
+    let input = input.as_ref();
     let mut segments: Vec<Segment> = Vec::new();
     let bytes = input.as_bytes();
 
@@ -167,39 +169,85 @@ fn split_markdown_with_components(input: &str) -> Vec<Segment> {
     segments
 }
 
-enum MacroInput {
-    Literal(LitStr),
-    File { lit: LitStr },
-    Url { lit: LitStr },
+#[derive(Debug)]
+enum Source {
+    Inline(LitStr),
+    File(LitStr),
+    Url(LitStr),
 }
 
-impl Parse for MacroInput {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        if input.peek(Lit) {
-            let lit: Lit = input.parse()?;
-            match lit {
-                Lit::Str(s) => Ok(MacroInput::Literal(s)),
-                _ => {
-                    Err(input
-                        .error("markdown_view!: expected a string literal or `file = \"...\"`"))
-                }
+fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => Some(s.clone()),
+        Expr::Call(call) => {
+            if call.args.len() != 1 {
+                return None;
             }
-        } else {
-            let ident: Ident = input.parse()?;
-            match ident.to_string().as_str() {
-                "file" | "path" => {
-                    input.parse::<Token![=]>()?;
-                    let lit: LitStr = input.parse()?;
-                    Ok(MacroInput::File { lit })
+            // Allow String::from("...") and std::string::String::from("...").
+            let is_string_from = match call.func.as_ref() {
+                Expr::Path(path) => {
+                    let mut segs = path.path.segments.iter().rev();
+                    matches!(
+                        (segs.next(), segs.next()),
+                        (Some(last), Some(prev)) if last.ident == "from" && prev.ident == "String"
+                    )
                 }
-                "url" => {
-                    input.parse::<Token![=]>()?;
-                    let lit: LitStr = input.parse()?;
-                    Ok(MacroInput::Url { lit })
-                }
-                _ => Err(input.error("markdown_view!: left side must be `file`, `path`, or `url`")),
+                _ => false,
+            };
+            if !is_string_from {
+                return None;
+            }
+            match call.args.first() {
+                Some(Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                })) => Some(s.clone()),
+                _ => None,
             }
         }
+        Expr::MethodCall(method) => {
+            let name = method.method.to_string();
+            if (name != "to_string" && name != "to_owned") || !method.args.is_empty() {
+                return None;
+            }
+            match method.receiver.as_ref() {
+                Expr::Lit(ExprLit {
+                    lit: Lit::Str(s), ..
+                }) => Some(s.clone()),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+impl Parse for Source {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        if input.peek(Ident) && input.peek2(Token![=]) {
+            let ident: Ident = input.parse()?;
+            input.parse::<Token![=]>()?;
+            let lit: LitStr = input.parse()?;
+            match ident.to_string().as_str() {
+                "file" | "path" => return Ok(Source::File(lit)),
+                "url" => return Ok(Source::Url(lit)),
+                _ => {
+                    return Err(
+                        input.error("markdown_view!: expected `file`, `path`, or `url` before `=`")
+                    )
+                }
+            }
+        }
+
+        let expr: Expr = input.parse()?;
+        extract_str_literal(&expr)
+            .map(Source::Inline)
+            .ok_or_else(|| {
+                input.error(
+                    "markdown_view!: expected a string literal (e.g., \"...\", String::from(\"...\"), or \"...\".to_string()) \
+                     or `file = \"...\"`/`url = \"...\"`",
+                )
+            })
     }
 }
 
@@ -215,16 +263,24 @@ impl Parse for MacroInput {
 ///
 /// Examples
 ///
+/// Using an owned `String` wrapper:
+///
+/// ```ignore
+/// use markdown_view_leptos::markdown_view;
+///
+/// let view = markdown_view!(String::from("# Title from String"));
+/// ```
+///
 /// Basic usage with a string or raw string:
 ///
 /// ```ignore
 /// use markdown_view_leptos::markdown_view;
 ///
 /// // Using a normal string
-/// let _view = markdown_view!("# Title\n\nSome text.");
+/// let view = markdown_view!("# Title\n\nSome text.");
 ///
 /// // Or a raw string to avoid escaping
-/// let _view = markdown_view!(r#"# Title
+/// let view = markdown_view!(r#"# Title
 ///
 /// Some text."#);
 /// ```
@@ -232,7 +288,7 @@ impl Parse for MacroInput {
 /// Embedding a Leptos component:
 ///
 /// ```ignore
-/// use leptos::*;
+/// use leptos::prelude::*;
 /// use markdown_view_leptos::markdown_view;
 ///
 /// #[component]
@@ -240,19 +296,19 @@ impl Parse for MacroInput {
 ///     view! { <span>"Hi"</span> }
 /// }
 ///
-/// let _view = markdown_view!(r#"Before {{ <Hello/> }} After"#);
+/// let view = markdown_view!(r#"Before {{ <Hello/> }} After"#);
 /// ```
 #[proc_macro]
 pub fn markdown_view(input: TokenStream) -> TokenStream {
-    let parsed = parse_macro_input!(input as MacroInput);
+    let parsed = parse_macro_input!(input as Source);
 
     // Keep lit for include_str! emission
     let mut file_path_lit: Option<LitStr> = None;
     let mut url_lit: Option<LitStr> = None;
 
     let markdown_source: String = match parsed {
-        MacroInput::Literal(lit) => lit.value(),
-        MacroInput::File { lit } => {
+        Source::Inline(lit) => lit.value(),
+        Source::File(lit) => {
             file_path_lit = Some(lit.clone());
             let manifest_dir =
                 std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
@@ -272,7 +328,7 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
                 }
             }
         }
-        MacroInput::Url { lit } => {
+        Source::Url(lit) => {
             url_lit = Some(lit.clone());
             let url = lit.value();
             // Avoid heavy network work or potential proc-macro server quirks in rust-analyzer.
@@ -353,9 +409,7 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
         // Turn file into an input dependency of the build to trigger recompiles.
         quote! { let _ = include_str!(::core::concat!(env!("CARGO_MANIFEST_DIR"), "/", #lit)); }
     } else if let Some(lit) = url_lit {
-        // Create a pseudo-dependency so rebuilds can be triggered manually if desired.
-        // For URLs, there's no stable file to watch, so we only embed the literal (no include_str!).
-        let _url: LitStr = lit;
+        let _ = lit; // keep future-proofed: url literal still available for diagnostics
         quote! {}
     } else {
         quote! {}
@@ -386,6 +440,12 @@ mod tests {
     }
 
     #[test]
+    fn convert_markdown_to_html_accepts_string() {
+        let html = convert_markdown_to_html(String::from("just **bold** text"));
+        assert!(html.contains("<strong>bold</strong>"));
+    }
+
+    #[test]
     fn convert_markdown_to_html_empty() {
         let html = convert_markdown_to_html("");
         assert_eq!(html, "");
@@ -410,6 +470,31 @@ mod tests {
             Segment::Markdown(s) => assert_eq!(s, " world"),
             _ => panic!("expected markdown"),
         }
+    }
+
+    #[test]
+    fn split_markdown_with_components_string_input() {
+        let input = String::from("Owned {{ <MyComp/> }} value");
+        let segments = split_markdown_with_components(input);
+        assert_eq!(segments.len(), 3);
+        assert!(matches!(segments[0], Segment::Markdown(_)));
+        assert!(matches!(segments[1], Segment::Component(_)));
+        assert!(matches!(segments[2], Segment::Markdown(_)));
+    }
+
+    #[test]
+    fn macro_input_accepts_string_from_literal() {
+        let parsed: Source = syn::parse_str(r#"String::from("Owned")"#).unwrap();
+        match parsed {
+            Source::Inline(lit) => assert_eq!(lit.value(), "Owned"),
+            _ => panic!("expected literal variant"),
+        }
+    }
+
+    #[test]
+    fn macro_input_rejects_non_literal_expressions() {
+        let err = syn::parse_str::<Source>("some_variable").unwrap_err();
+        assert!(err.to_string().contains("expected a string literal (e.g."));
     }
 
     #[test]
@@ -450,7 +535,8 @@ mod tests {
 
     #[test]
     fn split_handles_multiline_component() {
-        let input = "Before\n\n{{\n    <MyComp\n        foo=123\n        bar=\"baz\"\n    />\n}}\n\nAfter";
+        let input =
+            "Before\n\n{{\n    <MyComp\n        foo=123\n        bar=\"baz\"\n    />\n}}\n\nAfter";
         let segments = split_markdown_with_components(input);
         assert_eq!(segments.len(), 3);
         assert!(matches!(segments[0], Segment::Markdown(_)));
