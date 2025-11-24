@@ -3,7 +3,8 @@
 //! This crate provides a single procedural macro:
 //!
 //! - `markdown_view!`: Converts a string literal or `file = "..."`/`url = "..."` into
-//!   a Leptos `view!` tree at compile time; dynamic strings render at runtime.
+//!   a Leptos `view!` tree at compile time. Dynamic strings and computed file paths
+//!   render at runtime.
 //!
 //! The macro allows embedding
 //! real Leptos components inline using a lightweight MDX-like syntax:
@@ -17,6 +18,11 @@
 //!   untrusted Markdown if you need strict sanitization.
 //! - Remote `url = "..."` fetch happens at compile time and is disabled under
 //!   rust-analyzer to keep IDEs responsive. Prefer `file = "..."` for stability.
+//! - Dynamic sources (`markdown_view!(my_string)` or `file = format!(...)`) render
+//!   at runtime. `pulldown-cmark` is only needed in your crate if you rely on
+//!   runtime parsing (compile-time file/url literals do not need it).
+//! - `file = <expr>` paths depend on `std::fs` and therefore are not supported on
+//!   wasm32 unless the macro can resolve the path during compilation to embed it.
 //! - Component parsing looks for `{{ ... }}` and treats the inner content as
 //!   a Rust/RSX snippet. We intentionally keep this flexible and resilient: if
 //!   parsing fails, the content is rendered as plain Markdown to avoid breaking
@@ -42,12 +48,20 @@ use proc_macro::TokenStream;
 use proc_macro2::TokenStream as TokenStream2;
 use pulldown_cmark::{html, Options, Parser};
 use quote::quote;
+use std::env;
 use std::fs;
 use std::path::PathBuf;
+use syn::spanned::Spanned;
 use syn::{
     parse::discouraged::Speculative, parse::Parse, parse::ParseStream, parse_macro_input, Expr,
     ExprLit, Ident, Lit, LitBool, LitStr, Token,
 };
+
+fn is_rust_analyzer() -> bool {
+    env::var_os("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_some()
+        || env::var_os("RA_TEST").is_some()
+        || env::var_os("RUST_ANALYZER").is_some()
+}
 
 fn strip_front_matter(input: &str) -> &str {
     if !(input.starts_with("---\n") || input.starts_with("---\r\n")) {
@@ -206,10 +220,67 @@ fn split_markdown_with_components(input: impl AsRef<str>) -> Vec<Segment> {
 #[derive(Debug)]
 enum Source {
     Inline(LitStr),
-    File(LitStr),
+    File {
+        lit: LitStr,
+        used_expr: Option<Expr>,
+    },
+    FileExpr(Expr),
     Url(LitStr),
     /// Any other expression; rendered at runtime without inline component expansion.
     Dynamic(Expr),
+}
+
+fn normalize_url_for_fetch(url: &str) -> String {
+    rewrite_github_blob_url(url).unwrap_or_else(|| url.to_string())
+}
+
+fn rewrite_github_blob_url(url: &str) -> Option<String> {
+    let prefixes = [
+        "https://github.com/",
+        "http://github.com/",
+        "https://www.github.com/",
+        "http://www.github.com/",
+    ];
+    let stripped = prefixes.iter().find_map(|p| url.strip_prefix(p))?;
+    let mut parts: Vec<&str> = stripped.split('/').collect();
+    let blob_idx = parts.iter().position(|part| *part == "blob")?;
+    if blob_idx + 1 >= parts.len() {
+        return None;
+    }
+    parts.remove(blob_idx);
+    Some(format!(
+        "https://raw.githubusercontent.com/{}",
+        parts.join("/")
+    ))
+}
+
+fn resolve_expr_to_path_lit(expr: &Expr) -> Option<LitStr> {
+    if let Some(lit) = resolve_expr_to_lit(expr) {
+        return Some(lit);
+    }
+
+    // Heuristic: if the expression is a bare identifier and a file with that
+    // stem exists in the manifest directory, treat it as a compile-time path.
+    if let Expr::Path(path) = expr {
+        if path.qself.is_none() && path.path.segments.len() == 1 {
+            let ident = path.path.segments.first().unwrap().ident.to_string();
+            let manifest_dir =
+                std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
+            let mut candidates = vec![ident.clone()];
+            if !ident.ends_with(".md") {
+                candidates.push(format!("{ident}.md"));
+            }
+            for cand in candidates {
+                let mut full = PathBuf::from(&manifest_dir);
+                full.push(&cand);
+                if full.is_file() {
+                    return Some(LitStr::new(&cand, expr.span()));
+                }
+            }
+        }
+    }
+
+    None
 }
 
 impl Parse for Source {
@@ -217,10 +288,23 @@ impl Parse for Source {
         if input.peek(Ident) && input.peek2(Token![=]) {
             let ident: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
-            let lit: LitStr = input.parse()?;
+            let expr: Expr = input.parse()?;
             return match ident.to_string().as_str() {
-                "file" | "path" => Ok(Source::File(lit)),
-                "url" => Ok(Source::Url(lit)),
+                "file" | "path" => {
+                    if let Some(lit) = resolve_expr_to_path_lit(&expr) {
+                        let used_expr = match expr {
+                            Expr::Lit(_) => None,
+                            _ => Some(expr),
+                        };
+                        Ok(Source::File { lit, used_expr })
+                    } else {
+                        Ok(Source::FileExpr(expr))
+                    }
+                }
+                "url" => match resolve_expr_to_lit(&expr) {
+                    Some(lit) => Ok(Source::Url(lit)),
+                    None => Err(input.error("markdown_view!: `url` expects a string literal")),
+                },
                 _ => {
                     Err(input.error("markdown_view!: expected `file`, `path`, or `url` before `=`"))
                 }
@@ -283,11 +367,39 @@ fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
                 _ => None,
             }
         }
+        Expr::Macro(mac) => {
+            if mac.mac.path.is_ident("format") {
+                if let Ok(fmt) = syn::parse2::<FormatMacroNoArgs>(mac.mac.tokens.clone()) {
+                    if !fmt.has_args {
+                        return Some(fmt.fmt);
+                    }
+                }
+            }
+            None
+        }
         _ => None,
     }
 }
 fn resolve_expr_to_lit(expr: &Expr) -> Option<LitStr> {
     extract_str_literal(expr)
+}
+
+struct FormatMacroNoArgs {
+    fmt: LitStr,
+    has_args: bool,
+}
+
+impl Parse for FormatMacroNoArgs {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let fmt: LitStr = input.parse()?;
+        let has_args = if input.peek(Token![,]) {
+            let _: Token![,] = input.parse()?;
+            !input.is_empty()
+        } else {
+            false
+        };
+        Ok(Self { fmt, has_args })
+    }
 }
 
 impl Parse for MacroArgs {
@@ -313,26 +425,7 @@ impl Parse for MacroArgs {
             return Err(input.error("markdown_view!: expected a source argument"));
         }
 
-        let source = if input.peek(Ident) && input.peek2(Token![=]) {
-            let ident: Ident = input.parse()?;
-            input.parse::<Token![=]>()?;
-            let lit: LitStr = input.parse()?;
-            match ident.to_string().as_str() {
-                "file" | "path" => Source::File(lit),
-                "url" => Source::Url(lit),
-                _ => {
-                    return Err(
-                        input.error("markdown_view!: expected `file`, `path`, or `url` before `=`")
-                    )
-                }
-            }
-        } else {
-            let expr: Expr = input.parse()?;
-            match resolve_expr_to_lit(&expr) {
-                Some(lit) => Source::Inline(lit),
-                None => Source::Dynamic(expr),
-            }
-        };
+        let source: Source = input.parse()?;
 
         if input.peek(Token![,]) {
             let _ = input.parse::<Token![,]>();
@@ -348,94 +441,35 @@ impl Parse for MacroArgs {
     }
 }
 
-/// A Leptos-friendly procedural macro that converts Markdown into a `view!` tree
-/// and allows embedding Leptos components inline, MDX-style.
+/// Compile-time Markdown to a Leptos `view!` tree with optional inline components.
 ///
-/// Markdown is parsed with the following extensions enabled: tables, footnotes,
-/// strikethrough, and task lists. The generated HTML is injected into a
-/// `<div>` using the `inner_html` attribute inside a Leptos `view!` block.
+/// What it accepts:
+/// - Inline strings (`"..."`, `r#"..."#`, `String::from("...")`, `"...".to_string()`).
+/// - `file = "path.md"`: read at compile time (relative to `CARGO_MANIFEST_DIR`) and
+///   recompiled on change.
+/// - `file = some_var`: if the macro can see a real file at that path while compiling
+///   (e.g., `let content = "content.md";` in the same module), it embeds the file like
+///   the literal form. Otherwise it falls back to reading at runtime (non-wasm only).
+/// - `url = "https://..."`: fetched at compile time (disabled in rust-analyzer).
+/// - Any other expression: rendered at runtime; `{{ ... }}` blocks are left as text.
 ///
-/// To embed Leptos components within the Markdown, wrap them in `{{ ... }}` inside
-/// the string literal. For example: `{{ <MyComponent/> }}`.
-/// Inline component expansion happens whenever the macro can resolve the string
-/// content at compile time (string literal or `file`/`url`). If the value is
-/// only known at runtime, the Markdown is rendered without expanding `{{ ... }}`.
+/// Inline Leptos components:
+/// - Use `{{ ... }}` inside the Markdown: `{{ <MyComponent prop=value/> }}`.
+/// - Component expansion only happens when the Markdown itself is known at compile time
+///   (inline literal, `file`, or `url` sources that were resolved during macro expansion).
 ///
-/// Options:
-/// - Prefix the invocation with `strip_front_matter = true,` to remove a leading
-///   YAML front matter block (`--- ... ---`) before rendering. The flag works
-///   with inline strings as well as `file`/`url` sources.
+/// Option:
+/// - `strip_front_matter = true,`: drop a leading `--- ... ---` YAML block before rendering.
 ///
-/// Examples
-///
-/// Using an owned `String` wrapper:
-///
+/// Minimal examples:
 /// ```ignore
-/// use markdown_view_leptos::markdown_view;
-///
-/// let view = markdown_view!(String::from("# Title from String"));
-/// ```
-///
-/// Basic usage with a string or raw string:
-///
-/// ```ignore
-/// use markdown_view_leptos::markdown_view;
-///
-/// // Using a normal string
-/// let view = markdown_view!("# Title\n\nSome text.");
-///
-/// // Or a raw string to avoid escaping
-/// let view = markdown_view!(r#"# Title
-///
-/// Some text."#);
-/// ```
-///
-/// Embedding a Leptos component:
-///
-/// ```ignore
-/// use leptos::prelude::*;
-/// use markdown_view_leptos::markdown_view;
-///
-/// #[component]
-/// fn Hello() -> impl IntoView {
-///     view! { <span>"Hi"</span> }
-/// }
-///
-/// let view = markdown_view!(r#"Before {{ <Hello/> }} After"#);
-/// ```
-///
-/// Stripping YAML front matter (options come before the source):
-///
-/// ```ignore
-/// use markdown_view_leptos::markdown_view;
-///
-/// let view = markdown_view!(
-///     strip_front_matter = true,
-///     r#"---
-/// title: Example
-/// ---
-///
-/// # Hello
-/// Body text.
-/// "#);
-/// ```
-///
-/// The same flag can be combined with `file` or `url` sources:
-///
-/// ```ignore
-/// let view = markdown_view!(
-///     strip_front_matter = true,
-///     file = "content/post.md"
-/// );
-/// ```
-///
-/// Dynamic Markdown at runtime (inline components inside `{{ ... }}` are not expanded):
-///
-/// ```ignore
-/// use markdown_view_leptos::markdown_view;
-///
-/// let markdown_body: String = load_markdown_somehow();
-/// let view = markdown_view!(markdown_body);
+/// markdown_view!("# Title\n\nSome text.");
+/// markdown_view!(r#"Hello {{ <Hello/> }}!"#);
+/// markdown_view!(file = "content.md");                // compile-time include
+/// let content = format!("content.md");                // resolves if file exists at build time
+/// let view = markdown_view!(file = content);
+/// let runtime_body: String = load_somehow();          // rendered at runtime, no component splice
+/// let view_runtime = markdown_view!(runtime_body);
 /// ```
 #[proc_macro]
 pub fn markdown_view(input: TokenStream) -> TokenStream {
@@ -444,71 +478,99 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
         source: parsed,
     } = parse_macro_input!(input as MacroArgs);
 
+    // Helper functions injected for runtime rendering paths.
+    let runtime_helpers = quote! {
+        fn __mdv_strip_front_matter(input: &str) -> &str {
+            if !(input.starts_with("---\n") || input.starts_with("---\r\n")) {
+                return input;
+            }
+            let bytes = input.as_bytes();
+            let mut i = if input.starts_with("---\r\n") { 5 } else { 4 };
+            while i + 3 <= bytes.len() {
+                if bytes[i..].starts_with(b"---") && i > 0 && bytes[i - 1] == b'\n' {
+                    let after = i + 3;
+                    if after <= bytes.len() {
+                        if bytes.get(after) == Some(&b'\r') && bytes.get(after + 1) == Some(&b'\n') {
+                            return &input[after + 2..];
+                        }
+                        if bytes.get(after) == Some(&b'\n') {
+                            return &input[after + 1..];
+                        }
+                        if after == bytes.len() {
+                            return "";
+                        }
+                    }
+                }
+                i += 1;
+            }
+            input
+        }
+        fn __mdv_render_markdown_to_html(markdown: impl AsRef<str>, strip_front_matter: bool) -> String {
+            let markdown = if strip_front_matter {
+                __mdv_strip_front_matter(markdown.as_ref())
+            } else {
+                markdown.as_ref()
+            };
+            if markdown.trim().is_empty() {
+                return String::new();
+            }
+            let mut options = ::pulldown_cmark::Options::empty();
+            options.insert(::pulldown_cmark::Options::ENABLE_TABLES);
+            options.insert(::pulldown_cmark::Options::ENABLE_FOOTNOTES);
+            options.insert(::pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
+            options.insert(::pulldown_cmark::Options::ENABLE_TASKLISTS);
+            let parser = ::pulldown_cmark::Parser::new_ext(markdown, options);
+            let mut html_output = String::new();
+            ::pulldown_cmark::html::push_html(&mut html_output, parser);
+            html_output
+        }
+    };
+
     // Keep lit for include_str! emission
     let mut file_path_lit: Option<LitStr> = None;
     let mut url_lit: Option<LitStr> = None;
+    let mut usage_hint: Option<TokenStream2> = None;
 
     let markdown_source: String = match parsed {
         Source::Dynamic(expr) => {
             let expanded = quote! {{
-                fn strip_front_matter(input: &str) -> &str {
-                    if !(input.starts_with("---\n") || input.starts_with("---\r\n")) {
-                        return input;
-                    }
-                    let bytes = input.as_bytes();
-                    let mut i = if input.starts_with("---\r\n") { 5 } else { 4 };
-                    while i + 3 <= bytes.len() {
-                        if bytes[i..].starts_with(b"---") && i > 0 && bytes[i - 1] == b'\n' {
-                            let after = i + 3;
-                            if after <= bytes.len() {
-                                if bytes.get(after) == Some(&b'\r') && bytes.get(after + 1) == Some(&b'\n') {
-                                    return &input[after + 2..];
-                                }
-                                if bytes.get(after) == Some(&b'\n') {
-                                    return &input[after + 1..];
-                                }
-                                if after == bytes.len() {
-                                    return "";
-                                }
-                            }
-                        }
-                        i += 1;
-                    }
-                    input
-                }
-                fn render_markdown_to_html(markdown: impl AsRef<str>, strip_front_matter: bool) -> String {
-                    let markdown = if strip_front_matter {
-                        strip_front_matter(markdown.as_ref())
-                    } else {
-                        markdown.as_ref()
-                    };
-                    if markdown.trim().is_empty() {
-                        return String::new();
-                    }
-                    let mut options = ::pulldown_cmark::Options::empty();
-                    options.insert(::pulldown_cmark::Options::ENABLE_TABLES);
-                    options.insert(::pulldown_cmark::Options::ENABLE_FOOTNOTES);
-                    options.insert(::pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
-                    options.insert(::pulldown_cmark::Options::ENABLE_TASKLISTS);
-                    let parser = ::pulldown_cmark::Parser::new_ext(markdown, options);
-                    let mut html_output = String::new();
-                    ::pulldown_cmark::html::push_html(&mut html_output, parser);
-                    html_output
-                }
+                #runtime_helpers
                 let __md_source = #expr;
-                let __html = render_markdown_to_html(__md_source, #strip_front_matter);
+                let __html = __mdv_render_markdown_to_html(__md_source, #strip_front_matter);
                 ::leptos::view! { <div inner_html={__html}></div> }
             }};
             return expanded.into();
         }
+        Source::FileExpr(path_expr) => {
+            let expanded = quote! {{
+                #runtime_helpers
+                #[cfg(target_arch = "wasm32")]
+                {
+                    ::leptos::view! { <div>"(markdown_view!: `file = <expr>` requires a literal path on wasm)"</div> }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    let __path_val = #path_expr;
+                    let __markdown = ::std::fs::read_to_string(&__path_val).unwrap_or_else(|err| {
+                        panic!(
+                            "markdown_view!: failed to read file at '{}': {}",
+                            __path_val, err
+                        )
+                    });
+                    let __html = __mdv_render_markdown_to_html(__markdown, #strip_front_matter);
+                    ::leptos::view! { <div inner_html={__html}></div> }
+                }
+            }};
+            return expanded.into();
+        }
         Source::Inline(lit) => lit.value(),
-        Source::File(lit) => {
+        Source::File { lit, used_expr } => {
             file_path_lit = Some(lit.clone());
             let manifest_dir =
                 std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| String::from("."));
             let mut full_path = PathBuf::from(manifest_dir);
             full_path.push(lit.value());
-            match fs::read_to_string(&full_path) {
+            let content = match fs::read_to_string(&full_path) {
                 Ok(content) => content,
                 Err(err) => {
                     let msg = format!(
@@ -520,68 +582,48 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
                         .to_compile_error()
                         .into();
                 }
+            };
+            if let Some(expr) = used_expr {
+                // Keep the caller expression "used" to avoid unused variable warnings when
+                // we resolved the path during macro expansion.
+                usage_hint = Some(quote! { let _ = #expr; });
             }
+            content
         }
         Source::Url(lit) => {
+            let span = lit.span();
             url_lit = Some(lit.clone());
-            let url = lit.value();
-            // Avoid heavy network work or potential proc-macro server quirks in rust-analyzer.
-            let is_rust_analyzer = std::env::var_os("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_some()
-                || std::env::var_os("RA_TEST").is_some()
-                || std::env::var_os("RUST_ANALYZER").is_some();
-            if is_rust_analyzer {
-                // Return a lightweight placeholder so editor tooling doesn't panic.
+            let normalized_url = normalize_url_for_fetch(&lit.value());
+            if is_rust_analyzer() {
+                let msg = "(remote Markdown preview disabled in rust-analyzer)";
                 let expanded = quote! {{
-                    ::leptos::view! { <div>"(remote Markdown preview disabled in rust-analyzer)"</div> }
+                    ::leptos::view! { <div>{#msg}</div> }
                 }};
                 return expanded.into();
             }
-            let client = match reqwest::blocking::Client::builder()
-                .user_agent(concat!(
-                    env!("CARGO_PKG_NAME"),
-                    "/",
-                    env!("CARGO_PKG_VERSION"),
-                    " (+",
-                    env!("CARGO_PKG_REPOSITORY"),
-                    ")"
-                ))
-                .build()
-            {
-                Ok(c) => c,
+            let fetch_result = (|| {
+                let client = reqwest::blocking::Client::builder()
+                    .user_agent(concat!(
+                        env!("CARGO_PKG_NAME"),
+                        "/",
+                        env!("CARGO_PKG_VERSION"),
+                        " (+",
+                        env!("CARGO_PKG_REPOSITORY"),
+                        ")"
+                    ))
+                    .build()?;
+                let resp = client.get(&normalized_url).send()?.error_for_status()?;
+                resp.text()
+            })();
+
+            match fetch_result {
+                Ok(body) => body,
                 Err(err) => {
-                    let msg = format!("markdown_view!: failed to build HTTP client: {}", err);
-                    return syn::Error::new(proc_macro2::Span::call_site(), msg)
-                        .to_compile_error()
-                        .into();
-                }
-            };
-            match client.get(&url).send() {
-                Ok(resp) => match resp.error_for_status() {
-                    Ok(ok) => match ok.text() {
-                        Ok(body) => body,
-                        Err(err) => {
-                            let msg = format!(
-                                "markdown_view!: failed reading response body from '{}': {}",
-                                url, err
-                            );
-                            return syn::Error::new(proc_macro2::Span::call_site(), msg)
-                                .to_compile_error()
-                                .into();
-                        }
-                    },
-                    Err(err) => {
-                        let msg =
-                            format!("markdown_view!: HTTP GET '{}' returned error: {}", url, err);
-                        return syn::Error::new(proc_macro2::Span::call_site(), msg)
-                            .to_compile_error()
-                            .into();
-                    }
-                },
-                Err(err) => {
-                    let msg = format!("markdown_view!: HTTP GET '{}' failed: {}", url, err);
-                    return syn::Error::new(proc_macro2::Span::call_site(), msg)
-                        .to_compile_error()
-                        .into();
+                    let msg = format!(
+                        "markdown_view!: HTTP GET '{}' failed: {}",
+                        normalized_url, err
+                    );
+                    return syn::Error::new(span, msg).to_compile_error().into();
                 }
             }
         }
@@ -609,6 +651,7 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
 
     let expanded = quote! {{
         #include_stmt
+        #usage_hint
         ::leptos::view! {
             <div>
                 #(#parts)*
@@ -683,6 +726,39 @@ mod tests {
     }
 
     #[test]
+    fn macro_input_accepts_dynamic_file_path_expr() {
+        let parsed: Source = syn::parse_str(r#"file = format!("location/{}", path)"#).unwrap();
+        assert!(matches!(parsed, Source::FileExpr(_)));
+    }
+
+    #[test]
+    fn macro_input_accepts_format_without_args_as_literal_path() {
+        let parsed: Source = syn::parse_str(r#"file = format!("content.md")"#).unwrap();
+        match parsed {
+            Source::File { lit, .. } => assert_eq!(lit.value(), "content.md"),
+            _ => panic!("expected literal file path from format!"),
+        }
+    }
+
+    #[test]
+    fn macro_input_accepts_literal_file_path() {
+        let parsed: Source = syn::parse_str(r#"file = "content.md""#).unwrap();
+        match parsed {
+            Source::File { lit, .. } => assert_eq!(lit.value(), "content.md"),
+            _ => panic!("expected literal file path"),
+        }
+    }
+
+    #[test]
+    fn macro_accepts_url_literal_source() {
+        let parsed: Source = syn::parse_str(r#"url = "https://example.com/readme.md""#).unwrap();
+        match parsed {
+            Source::Url(lit) => assert!(lit.value().contains("https://example.com")),
+            _ => panic!("expected url literal"),
+        }
+    }
+
+    #[test]
     fn macro_input_accepts_string_from_literal() {
         let parsed: Source = syn::parse_str(r#"String::from("Owned")"#).unwrap();
         match parsed {
@@ -742,6 +818,24 @@ mod tests {
         assert!(matches!(segments[0], Segment::Markdown(_)));
         assert!(matches!(segments[1], Segment::Component(_)));
         assert!(matches!(segments[2], Segment::Markdown(_)));
+    }
+
+    #[test]
+    fn rewrites_github_blob_urls_to_raw() {
+        let raw = rewrite_github_blob_url(
+            "https://github.com/leptos-rs/awesome-leptos/blob/main/README.md",
+        )
+        .expect("should rewrite blob url");
+        assert_eq!(
+            raw,
+            "https://raw.githubusercontent.com/leptos-rs/awesome-leptos/main/README.md"
+        );
+    }
+
+    #[test]
+    fn leaves_non_github_urls() {
+        let url = "https://example.com/docs/readme.md";
+        assert_eq!(normalize_url_for_fetch(url), url);
     }
 
     #[test]

@@ -44,18 +44,8 @@ And some text after.
 }
 ```
 
-### Dynamic `String` input
-You can also pass a `String`/`&str` variable to the macro. Dynamic inputs render Markdown at runtime without expanding inline components inside `{{ ... }}`.
-
-```rust
-let markdown_body = load_markdown_from_disk();
-let view = markdown_view!(markdown_body);
-```
-
-## From a File
-`file` paths are resolved relative to your crate root (`CARGO_MANIFEST_DIR`).
-
-Below is a live Leptos component:
+### Inline string
+Works with normal or raw strings; inline `{{ ... }}` components are spliced in.
 
 ```rust
 use leptos::prelude::*;
@@ -67,7 +57,21 @@ pub fn App() -> impl IntoView {
 }
 ```
 
-When using `file = "..."`, the macro emits an `include_str!` so edits to the file trigger recompiles.
+### From a file
+`file` paths are resolved relative to your crate root (`CARGO_MANIFEST_DIR`). Literal paths are embedded at compile time so edits trigger recompiles.
+
+You can also point to a variable. If the macro can resolve it at compile time (e.g., `let content = "content.md";` or `format!("content.md")` where the file exists), it behaves like a literal path. Otherwise it falls back to reading at runtime (non-wasm only) and inline components are rendered as plain Markdown.
+
+```rust
+let base = "/opt/articles";
+let name = "welcome.md";
+let view = markdown_view!(file = format!("{}/{}", base, name));
+```
+
+For wasm builds, use a path the macro can resolve at compile time so the content is embedded (no filesystem at runtime).
+
+### Dynamic string at runtime
+`String`/`&str` variables are accepted; Markdown is rendered at runtime and `{{ ... }}` is left untouched.
 
 ## From a URL (build‑time fetch)
 
@@ -84,6 +88,7 @@ pub fn App() -> impl IntoView {
 
 - Happens at compile‑time (not client runtime), using a blocking HTTP GET.
 - For editor tooling (rust‑analyzer), remote fetch is disabled and a small placeholder is returned for responsiveness.
+- Remote fetch happens at build time on non‑wasm targets (blocking HTTP GET). rust‑analyzer and wasm builds get a placeholder for responsiveness. Network errors fall back to a placeholder; otherwise the fetched content is embedded.
 - Prefer `file = "..."` for reproducible builds.
 
 ## How it works
