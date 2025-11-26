@@ -19,8 +19,11 @@
 //! - Remote `url = "..."` fetch happens at compile time and is disabled under
 //!   rust-analyzer to keep IDEs responsive. Prefer `file = "..."` for stability.
 //! - Dynamic sources (`markdown_view!(my_string)` or `file = format!(...)`) render
-//!   at runtime. `pulldown-cmark` is only needed in your crate if you rely on
-//!   runtime parsing (compile-time file/url literals do not need it).
+//!   at runtime using a built-in fallback parser—no extra dependencies required
+//!   in your application for runtime Markdown rendering. If the macro can see a
+//!   string literal binding in the same file (for example `let body = r#"..."#;`
+//!   followed by `markdown_view!(body)`), it treats it like an inline literal so
+//!   inline `{{ ... }}` components still expand.
 //! - `file = <expr>` paths depend on `std::fs` and therefore are not supported on
 //!   wasm32 unless the macro can resolve the path during compilation to embed it.
 //! - Component parsing looks for `{{ ... }}` and treats the inner content as
@@ -45,16 +48,18 @@
 
 use proc_macro::TokenStream;
 // no extra items from proc_macro needed beyond TokenStream
-use proc_macro2::TokenStream as TokenStream2;
+use proc_macro2::{LineColumn, TokenStream as TokenStream2};
 use pulldown_cmark::{html, Options, Parser};
 use quote::quote;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use syn::spanned::Spanned;
+use syn::visit::Visit;
 use syn::{
-    parse::discouraged::Speculative, parse::Parse, parse::ParseStream, parse_macro_input, Expr,
-    ExprLit, Ident, Lit, LitBool, LitStr, Token,
+    parse::discouraged::Speculative, parse::Parse, parse::ParseStream, parse_macro_input, Block,
+    Expr, ExprLit, Ident, ImplItemFn, ItemConst, ItemFn, ItemImpl, ItemMod, ItemStatic, Lit,
+    LitBool, LitStr, Local, Pat, StaticMutability, Token, TraitItemFn,
 };
 
 fn is_rust_analyzer() -> bool {
@@ -380,8 +385,157 @@ fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
         _ => None,
     }
 }
+
+fn is_before_or_equal(a: LineColumn, b: LineColumn) -> bool {
+    a.line < b.line || (a.line == b.line && a.column <= b.column)
+}
+
+fn span_contains(haystack: proc_macro2::Span, needle: proc_macro2::Span) -> bool {
+    let h_start = haystack.start();
+    let h_end = haystack.end();
+    let n_start = needle.start();
+    let n_end = needle.end();
+    is_before_or_equal(h_start, n_start) && is_before_or_equal(n_end, h_end)
+}
+
+struct BindingFinder {
+    target: String,
+    usage_span: proc_macro2::Span,
+    usage_start: LineColumn,
+    best: Option<(LineColumn, LitStr)>,
+}
+
+impl BindingFinder {
+    fn consider(&mut self, span: proc_macro2::Span, lit: LitStr) {
+        let start = span.start();
+        if !is_before_or_equal(start, self.usage_start) {
+            return;
+        }
+        let replace = match &self.best {
+            None => true,
+            Some((prev, _)) => {
+                start.line > prev.line || (start.line == prev.line && start.column >= prev.column)
+            }
+        };
+        if replace {
+            self.best = Some((start, lit));
+        }
+    }
+}
+
+impl<'ast> Visit<'ast> for BindingFinder {
+    fn visit_item_fn(&mut self, i: &'ast ItemFn) {
+        if span_contains(i.block.span(), self.usage_span) {
+            syn::visit::visit_item_fn(self, i);
+        }
+    }
+
+    fn visit_impl_item_fn(&mut self, i: &'ast ImplItemFn) {
+        if span_contains(i.block.span(), self.usage_span) {
+            syn::visit::visit_impl_item_fn(self, i);
+        }
+    }
+
+    fn visit_trait_item_fn(&mut self, i: &'ast TraitItemFn) {
+        if let Some(block) = &i.default {
+            if span_contains(block.span(), self.usage_span) {
+                syn::visit::visit_trait_item_fn(self, i);
+            }
+        }
+    }
+
+    fn visit_item_mod(&mut self, m: &'ast ItemMod) {
+        if let Some((_, items)) = &m.content {
+            if span_contains(m.span(), self.usage_span) {
+                for item in items {
+                    self.visit_item(item);
+                }
+            }
+        }
+    }
+
+    fn visit_item_impl(&mut self, i: &'ast ItemImpl) {
+        if span_contains(i.span(), self.usage_span) {
+            syn::visit::visit_item_impl(self, i);
+        }
+    }
+
+    fn visit_block(&mut self, b: &'ast Block) {
+        if span_contains(b.span(), self.usage_span) {
+            syn::visit::visit_block(self, b);
+        }
+    }
+
+    fn visit_local(&mut self, local: &'ast Local) {
+        if let Pat::Ident(pat_ident) = &local.pat {
+            if pat_ident.mutability.is_none() && pat_ident.ident == self.target {
+                if let Some(init) = &local.init {
+                    if let Some(lit) = extract_str_literal(&init.expr) {
+                        self.consider(local.span(), lit);
+                    }
+                }
+            }
+        }
+        syn::visit::visit_local(self, local);
+    }
+
+    fn visit_item_const(&mut self, item: &'ast ItemConst) {
+        if item.ident == self.target {
+            if let Some(lit) = extract_str_literal(&item.expr) {
+                self.consider(item.span(), lit);
+            }
+        }
+        syn::visit::visit_item_const(self, item);
+    }
+
+    fn visit_item_static(&mut self, item: &'ast ItemStatic) {
+        if matches!(item.mutability, StaticMutability::None) && item.ident == self.target {
+            if let Some(lit) = extract_str_literal(&item.expr) {
+                self.consider(item.span(), lit);
+            }
+        }
+        syn::visit::visit_item_static(self, item);
+    }
+}
+
+fn resolve_ident_literal_from_source(
+    ident: &Ident,
+    usage_span: proc_macro2::Span,
+) -> Option<LitStr> {
+    // Best-effort: scan the same source file for the nearest non-mut string binding
+    // of this identifier that appears before the macro invocation.
+    let path = usage_span.local_file()?;
+    let source = fs::read_to_string(&path).ok()?;
+    let file = syn::parse_file(&source).ok()?;
+    let mut finder = BindingFinder {
+        target: ident.to_string(),
+        usage_span,
+        usage_start: usage_span.start(),
+        best: None,
+    };
+    finder.visit_file(&file);
+    finder
+        .best
+        .map(|(_, lit)| LitStr::new(&lit.value(), usage_span))
+}
+
 fn resolve_expr_to_lit(expr: &Expr) -> Option<LitStr> {
-    extract_str_literal(expr)
+    if let Some(lit) = extract_str_literal(expr) {
+        return Some(lit);
+    }
+    match expr {
+        Expr::Group(group) => resolve_expr_to_lit(&group.expr),
+        Expr::Reference(r) => resolve_expr_to_lit(&r.expr),
+        Expr::Paren(p) => resolve_expr_to_lit(&p.expr),
+        Expr::Path(path) => {
+            if path.qself.is_none() && path.path.segments.len() == 1 {
+                let ident = &path.path.segments[0].ident;
+                return resolve_ident_literal_from_source(ident, expr.span());
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 struct FormatMacroNoArgs {
@@ -451,7 +605,10 @@ impl Parse for MacroArgs {
 ///   (e.g., `let content = "content.md";` in the same module), it embeds the file like
 ///   the literal form. Otherwise it falls back to reading at runtime (non-wasm only).
 /// - `url = "https://..."`: fetched at compile time (disabled in rust-analyzer).
-/// - Any other expression: rendered at runtime; `{{ ... }}` blocks are left as text.
+/// - Any other expression: rendered at runtime; `{{ ... }}` blocks are left as text
+///   unless the macro can resolve it to a nearby string literal binding in the same
+///   source file (e.g., `let body = r#"..."#; markdown_view!(body);`), in which
+///   case inline components are expanded.
 ///
 /// Inline Leptos components:
 /// - Use `{{ ... }}` inside the Markdown: `{{ <MyComponent prop=value/> }}`.
@@ -466,8 +623,10 @@ impl Parse for MacroArgs {
 /// markdown_view!("# Title\n\nSome text.");
 /// markdown_view!(r#"Hello {{ <Hello/> }}!"#);
 /// markdown_view!(file = "content.md");                // compile-time include
-/// let content = format!("content.md");                // resolves if file exists at build time
-/// let view = markdown_view!(file = content);
+/// let content = format!("content.md");                
+/// let view = markdown_view!(file = content);          // resolves if file exists at build time
+/// let body = r#"Inline {{ <MyComp/> }} via variable."#;
+/// let inline_view = markdown_view!(body);             // still compile-time, components work
 /// let runtime_body: String = load_somehow();          // rendered at runtime, no component splice
 /// let view_runtime = markdown_view!(runtime_body);
 /// ```
@@ -505,6 +664,106 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
             }
             input
         }
+        fn __mdv_escape_html(input: &str) -> String {
+            let mut escaped = String::with_capacity(input.len());
+            for ch in input.chars() {
+                match ch {
+                    '&' => escaped.push_str("&amp;"),
+                    '<' => escaped.push_str("&lt;"),
+                    '>' => escaped.push_str("&gt;"),
+                    '"' => escaped.push_str("&quot;"),
+                    '\'' => escaped.push_str("&#39;"),
+                    _ => escaped.push(ch),
+                }
+            }
+            escaped
+        }
+        fn __mdv_render_inline(text: &str) -> String {
+            let mut out = String::new();
+            let mut chars = text.chars().peekable();
+            let mut bold = false;
+            let mut italic = false;
+            let mut strike = false;
+            let mut code = false;
+
+            while let Some(ch) = chars.next() {
+                if code {
+                    if ch == '`' {
+                        code = false;
+                        out.push_str("</code>");
+                    } else {
+                        match ch {
+                            '&' => out.push_str("&amp;"),
+                            '<' => out.push_str("&lt;"),
+                            '>' => out.push_str("&gt;"),
+                            '"' => out.push_str("&quot;"),
+                            '\'' => out.push_str("&#39;"),
+                            _ => out.push(ch),
+                        }
+                    }
+                    continue;
+                }
+
+                if ch == '`' {
+                    code = true;
+                    out.push_str("<code>");
+                    continue;
+                }
+                if ch == '*' && chars.peek() == Some(&'*') {
+                    let _ = chars.next();
+                    if bold {
+                        out.push_str("</strong>");
+                    } else {
+                        out.push_str("<strong>");
+                    }
+                    bold = !bold;
+                    continue;
+                }
+                if ch == '*' {
+                    if italic {
+                        out.push_str("</em>");
+                    } else {
+                        out.push_str("<em>");
+                    }
+                    italic = !italic;
+                    continue;
+                }
+                if ch == '~' && chars.peek() == Some(&'~') {
+                    let _ = chars.next();
+                    if strike {
+                        out.push_str("</del>");
+                    } else {
+                        out.push_str("<del>");
+                    }
+                    strike = !strike;
+                    continue;
+                }
+
+                match ch {
+                    '&' => out.push_str("&amp;"),
+                    '<' => out.push_str("&lt;"),
+                    '>' => out.push_str("&gt;"),
+                    '"' => out.push_str("&quot;"),
+                    '\'' => out.push_str("&#39;"),
+                    _ => out.push(ch),
+                }
+            }
+
+            if code {
+                out.push_str("</code>");
+            }
+            if bold {
+                out.push_str("</strong>");
+            }
+            if italic {
+                out.push_str("</em>");
+            }
+            if strike {
+                out.push_str("</del>");
+            }
+
+            out
+        }
         fn __mdv_render_markdown_to_html(markdown: impl AsRef<str>, strip_front_matter: bool) -> String {
             let markdown = if strip_front_matter {
                 __mdv_strip_front_matter(markdown.as_ref())
@@ -514,15 +773,132 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
             if markdown.trim().is_empty() {
                 return String::new();
             }
-            let mut options = ::pulldown_cmark::Options::empty();
-            options.insert(::pulldown_cmark::Options::ENABLE_TABLES);
-            options.insert(::pulldown_cmark::Options::ENABLE_FOOTNOTES);
-            options.insert(::pulldown_cmark::Options::ENABLE_STRIKETHROUGH);
-            options.insert(::pulldown_cmark::Options::ENABLE_TASKLISTS);
-            let parser = ::pulldown_cmark::Parser::new_ext(markdown, options);
-            let mut html_output = String::new();
-            ::pulldown_cmark::html::push_html(&mut html_output, parser);
-            html_output
+
+            let mut html = String::new();
+            let mut in_code_block = false;
+            let mut list_kind: Option<char> = None; // 'u' unordered, 'o' ordered
+            let mut paragraph: Vec<String> = Vec::new();
+
+            let mut flush_paragraph = |html: &mut String, paragraph: &mut Vec<String>| {
+                if paragraph.is_empty() {
+                    return;
+                }
+                let joined = paragraph.join(" ");
+                html.push_str("<p>");
+                html.push_str(&__mdv_render_inline(&joined));
+                html.push_str("</p>");
+                paragraph.clear();
+            };
+            let mut close_list = |html: &mut String, list_kind: &mut Option<char>| {
+                if let Some(kind) = *list_kind {
+                    if kind == 'o' {
+                        html.push_str("</ol>");
+                    } else {
+                        html.push_str("</ul>");
+                    }
+                    *list_kind = None;
+                }
+            };
+
+            for raw_line in markdown.lines() {
+                let line = raw_line.trim_end_matches('\r');
+                let trimmed = line.trim_start();
+
+                if trimmed.starts_with("```") {
+                    flush_paragraph(&mut html, &mut paragraph);
+                    close_list(&mut html, &mut list_kind);
+                    if in_code_block {
+                        html.push_str("</code></pre>");
+                        in_code_block = false;
+                    } else {
+                        in_code_block = true;
+                        html.push_str("<pre><code>");
+                    }
+                    continue;
+                }
+
+                if in_code_block {
+                    html.push_str(&__mdv_escape_html(line));
+                    html.push('\n');
+                    continue;
+                }
+
+                if trimmed.is_empty() {
+                    flush_paragraph(&mut html, &mut paragraph);
+                    close_list(&mut html, &mut list_kind);
+                    continue;
+                }
+
+                // Headings: up to 6 #'s followed by a space.
+                let mut hashes = 0usize;
+                for ch in trimmed.chars() {
+                    if ch == '#' {
+                        hashes += 1;
+                    } else {
+                        break;
+                    }
+                }
+                if hashes > 0 && hashes <= 6 && trimmed.chars().nth(hashes) == Some(' ') {
+                    flush_paragraph(&mut html, &mut paragraph);
+                    close_list(&mut html, &mut list_kind);
+                    let content = trimmed[hashes + 1..].trim_start();
+                    let rendered = __mdv_render_inline(content);
+                    let level = hashes.to_string();
+                    html.push_str("<h");
+                    html.push_str(&level);
+                    html.push('>');
+                    html.push_str(&rendered);
+                    html.push_str("</h");
+                    html.push_str(&level);
+                    html.push('>');
+                    continue;
+                }
+
+                // Unordered list items.
+                if let Some(rest) = trimmed
+                    .strip_prefix("- ")
+                    .or_else(|| trimmed.strip_prefix("* "))
+                    .or_else(|| trimmed.strip_prefix("+ "))
+                {
+                    flush_paragraph(&mut html, &mut paragraph);
+                    if list_kind != Some('u') {
+                        close_list(&mut html, &mut list_kind);
+                        html.push_str("<ul>");
+                        list_kind = Some('u');
+                    }
+                    html.push_str("<li>");
+                    html.push_str(&__mdv_render_inline(rest.trim()));
+                    html.push_str("</li>");
+                    continue;
+                }
+
+                // Ordered list items (1. Item).
+                if let Some(dot_idx) = trimmed.find(". ") {
+                    if trimmed[..dot_idx].chars().all(|c| c.is_ascii_digit()) {
+                        flush_paragraph(&mut html, &mut paragraph);
+                        if list_kind != Some('o') {
+                            close_list(&mut html, &mut list_kind);
+                            html.push_str("<ol>");
+                            list_kind = Some('o');
+                        }
+                        let rest = trimmed[dot_idx + 2..].trim();
+                        html.push_str("<li>");
+                        html.push_str(&__mdv_render_inline(rest));
+                        html.push_str("</li>");
+                        continue;
+                    }
+                }
+
+                paragraph.push(trimmed.to_string());
+            }
+
+            if in_code_block {
+                html.push_str("</code></pre>");
+            }
+            flush_paragraph(&mut html, &mut paragraph);
+            close_list(&mut html, &mut list_kind);
+
+            html
         }
     };
 

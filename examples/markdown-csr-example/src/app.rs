@@ -222,10 +222,37 @@ fn start_animation_loop(
 }
 
 #[component]
+fn Counter() -> impl IntoView {
+    let (count, set_count) = signal(0);
+
+    view! {
+        <button
+            on:click=move |_| {
+                set_count.update(|n| *n += 1);
+            }
+            style="padding:8px 16px;background:#38bdf8;color:#0b1020;border:none;border-radius:4px;cursor:pointer;font-weight:bold;font-size:14px"
+        >
+
+            "Click me: "
+            {count}
+        </button>
+    }
+}
+
+#[component]
 pub fn App() -> impl IntoView {
+    let content = r"# Markdown CSR Example 
+    This is a {{ <Counter /> }} inside markdown!
+    Leptos is great
+    
+     - Markdown is great
+     - CSR is great
+
+     Enjoy using Leptos with Dynamic Markdown!";
+
     view! {
         <main style="font-family:system-ui, sans-serif; color:#e2e8f0; background:#0b1020; min-height:100vh; padding:24px;">
-            {markdown_view!(file = "content.md")}
+            {markdown_view!(content)} {markdown_view!(file = "content.md")}
         </main>
     }
 }

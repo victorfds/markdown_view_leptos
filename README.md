@@ -71,7 +71,23 @@ let view = markdown_view!(file = format!("{}/{}", base, name));
 For wasm builds, use a path the macro can resolve at compile time so the content is embedded (no filesystem at runtime).
 
 ### Dynamic string at runtime
-`String`/`&str` variables are accepted; Markdown is rendered at runtime and `{{ ... }}` is left untouched.
+`String`/`&str` variables are accepted.
+
+```rust
+let body = r#"
+# Title
+
+Inline component: {{ <Hello/> }}
+"#;
+let inline_view = markdown_view!(body); // components work: `body` is a literal binding
+
+let runtime_body: String = fetch_from_server();
+let runtime_view = markdown_view!(runtime_body); // runtime parsing, components untouched
+```
+
+If the macro can see a string literal binding in the same file (as with `body` above),
+it inlines it so `{{ ... }}` components still render. Otherwise Markdown is rendered
+at runtime and `{{ ... }}` is left untouched.
 
 ## From a URL (build‑time fetch)
 
@@ -93,8 +109,8 @@ pub fn App() -> impl IntoView {
 
 ## How it works
 
-- Markdown → HTML: Parsed with `pulldown‑cmark` (tables, footnotes, strikethrough, task lists). Injected via `inner_html` into a `view!` tree.
-- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree (for compile-time sources: string literal, `file`, or `url`). Dynamic `String` inputs render as plain Markdown without expanding `{{ ... }}`.
+- Markdown → HTML: Compile-time sources use `pulldown‑cmark` (tables, footnotes, strikethrough, task lists); runtime strings are parsed with a built-in lightweight renderer so no extra dependencies are needed. Injected via `inner_html` into a `view!` tree.
+- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree (for compile-time sources: string literal, `file`, `url`, or identifiers that resolve to literals in the same file). Other dynamic `String` inputs render as plain Markdown without expanding `{{ ... }}`.
 - Fenced code: Triple‑backtick fences (```) are respected; `{{ ... }}` inside them is ignored and rendered literally.
 - Parse fallback: If a snippet inside `{{ ... }}` doesn’t parse, it is rendered as plain Markdown so your build doesn’t fail unexpectedly.
 - Front matter: Pass `strip_front_matter = true` to drop a leading `--- ... ---` block (YAML-style) before rendering if you don't want it to show up.
