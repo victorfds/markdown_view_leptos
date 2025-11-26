@@ -222,6 +222,42 @@ fn split_markdown_with_components(input: impl AsRef<str>) -> Vec<Segment> {
     segments
 }
 
+fn raw_string_literal_sharp_count(value: &str) -> usize {
+    let mut max_sharps = 0usize;
+    let mut saw_quote = false;
+    let bytes = value.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'"' {
+            saw_quote = true;
+            let mut count = 0;
+            let mut j = i + 1;
+            while j < bytes.len() && bytes[j] == b'#' {
+                count += 1;
+                j += 1;
+            }
+            if count > max_sharps {
+                max_sharps = count;
+            }
+        }
+        i += 1;
+    }
+
+    if saw_quote {
+        max_sharps + 1
+    } else {
+        0
+    }
+}
+
+fn raw_string_literal_tokens(value: &str) -> TokenStream2 {
+    let hashes = "#".repeat(raw_string_literal_sharp_count(value));
+    let literal = format!("r{hashes}\"{value}\"{hashes}");
+    literal
+        .parse::<TokenStream2>()
+        .expect("raw string literal should always parse")
+}
+
 #[derive(Debug)]
 enum Source {
     Inline(LitStr),
@@ -605,15 +641,13 @@ impl Parse for MacroArgs {
 ///   (e.g., `let content = "content.md";` in the same module), it embeds the file like
 ///   the literal form. Otherwise it falls back to reading at runtime (non-wasm only).
 /// - `url = "https://..."`: fetched at compile time (disabled in rust-analyzer).
-/// - Any other expression: rendered at runtime; `{{ ... }}` blocks are left as text
-///   unless the macro can resolve it to a nearby string literal binding in the same
-///   source file (e.g., `let body = r#"..."#; markdown_view!(body);`), in which
-///   case inline components are expanded.
+/// - Any other expression: rendered at runtime; `{{ ... }}` blocks are expanded by the
+///   runtime parser so inline components render even when the string is only known at runtime.
 ///
 /// Inline Leptos components:
 /// - Use `{{ ... }}` inside the Markdown: `{{ <MyComponent prop=value/> }}`.
-/// - Component expansion only happens when the Markdown itself is known at compile time
-///   (inline literal, `file`, or `url` sources that were resolved during macro expansion).
+/// - Component expansion always happens: compile-time sources expand up front, while
+///   runtime `String` inputs are parsed on the fly so `{{ ... }}` keeps working.
 ///
 /// Option:
 /// - `strip_front_matter = true,`: drop a leading `--- ... ---` YAML block before rendering.
@@ -627,8 +661,8 @@ impl Parse for MacroArgs {
 /// let view = markdown_view!(file = content);          // resolves if file exists at build time
 /// let body = r#"Inline {{ <MyComp/> }} via variable."#;
 /// let inline_view = markdown_view!(body);             // still compile-time, components work
-/// let runtime_body: String = load_somehow();          // rendered at runtime, no component splice
-/// let view_runtime = markdown_view!(runtime_body);
+/// let runtime_body: String = load_somehow();          // rendered at runtime, components expand
+/// let view_runtime = markdown_view!(runtime_body);    // runtime renderer handles `{{ ... }}`
 /// ```
 #[proc_macro]
 pub fn markdown_view(input: TokenStream) -> TokenStream {
@@ -1010,7 +1044,8 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
     let parts = segments.into_iter().map(|seg| match seg {
         Segment::Markdown(md) => {
             let html_output = convert_markdown_to_html(&md, strip_front_matter);
-            quote! { <div inner_html={#html_output}></div> }
+            let literal = raw_string_literal_tokens(&html_output);
+            quote! { <div inner_html={#literal}></div> }
         }
         Segment::Component(ts) => quote! { #ts },
     });

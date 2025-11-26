@@ -244,9 +244,9 @@ pub fn App() -> impl IntoView {
     let content = r"# Markdown CSR Example 
     This is a {{ <Counter /> }} inside markdown!
     Leptos is great
-    
-     - Markdown is great
-     - CSR is great
+        
+     - Rust is great
+     - Leptos is great
 
      Enjoy using Leptos with Dynamic Markdown!";
 

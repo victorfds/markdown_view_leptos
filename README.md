@@ -60,7 +60,7 @@ pub fn App() -> impl IntoView {
 ### From a file
 `file` paths are resolved relative to your crate root (`CARGO_MANIFEST_DIR`). Literal paths are embedded at compile time so edits trigger recompiles.
 
-You can also point to a variable. If the macro can resolve it at compile time (e.g., `let content = "content.md";` or `format!("content.md")` where the file exists), it behaves like a literal path. Otherwise it falls back to reading at runtime (non-wasm only) and inline components are rendered as plain Markdown.
+You can also point to a variable. If the macro can resolve it at compile time (e.g., `let content = "content.md";` or `format!("content.md")` where the file exists), it behaves like a literal path. Otherwise it falls back to reading at runtime (non-wasm only) and inline components are still resolved when the view renders.
 
 ```rust
 let base = "/opt/articles";
@@ -82,12 +82,12 @@ Inline component: {{ <Hello/> }}
 let inline_view = markdown_view!(body); // components work: `body` is a literal binding
 
 let runtime_body: String = fetch_from_server();
-let runtime_view = markdown_view!(runtime_body); // runtime parsing, components untouched
+let runtime_view = markdown_view!(runtime_body); // runtime parsing, components expand at runtime
 ```
 
 If the macro can see a string literal binding in the same file (as with `body` above),
 it inlines it so `{{ ... }}` components still render. Otherwise Markdown is rendered
-at runtime and `{{ ... }}` is left untouched.
+at runtime and `{{ ... }}` blocks are expanded there as well, so components always work.
 
 ## From a URL (build‑time fetch)
 
@@ -110,7 +110,7 @@ pub fn App() -> impl IntoView {
 ## How it works
 
 - Markdown → HTML: Compile-time sources use `pulldown‑cmark` (tables, footnotes, strikethrough, task lists); runtime strings are parsed with a built-in lightweight renderer so no extra dependencies are needed. Injected via `inner_html` into a `view!` tree.
-- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree (for compile-time sources: string literal, `file`, `url`, or identifiers that resolve to literals in the same file). Other dynamic `String` inputs render as plain Markdown without expanding `{{ ... }}`.
+- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree (for compile-time sources: string literal, `file`, `url`, or identifiers that resolve to literals in the same file). Runtime `String` inputs go through the lightweight renderer, which now also expands `{{ ... }}` so components work regardless of when the string is known.
 - Fenced code: Triple‑backtick fences (```) are respected; `{{ ... }}` inside them is ignored and rendered literally.
 - Parse fallback: If a snippet inside `{{ ... }}` doesn’t parse, it is rendered as plain Markdown so your build doesn’t fail unexpectedly.
 - Front matter: Pass `strip_front_matter = true` to drop a leading `--- ... ---` block (YAML-style) before rendering if you don't want it to show up.
