@@ -342,12 +342,16 @@ impl Parse for Source {
                         Ok(Source::FileExpr(expr))
                     }
                 }
-                "url" => match resolve_expr_to_lit(&expr) {
-                    Some(lit) => Ok(Source::Url(lit)),
-                    None => Err(input.error(
-                        "markdown_view!: `url` expects a string literal or literal-like binding",
-                    )),
-                },
+                "url" => {
+                    // Prefer compile-time resolution so remote content can be fetched
+                    // during macro expansion. If that fails, gracefully fall back to
+                    // treating the expression as a dynamic Markdown string source,
+                    // equivalent to calling `markdown_view!(expr)` without `url =`.
+                    match resolve_expr_to_lit(&expr) {
+                        Some(lit) => Ok(Source::Url(lit)),
+                        None => Ok(Source::Dynamic(expr)),
+                    }
+                }
                 _ => {
                     Err(input.error("markdown_view!: expected `file`, `path`, or `url` before `=`"))
                 }
@@ -852,10 +856,13 @@ impl Parse for MacroArgs {
 /// - `file = some_var`: if the macro can see a real file at that path while compiling
 ///   (e.g., `let content = "content.md";` in the same module), it embeds the file like
 ///   the literal form. Otherwise it falls back to reading at runtime (non-wasm only).
-/// - `url = "https://..."`: fetched at compile time (disabled in rust-analyzer). You can
-///   also use literal-like bindings (e.g. `const URL: &str = "https://...";` then
-///   `markdown_view!(url = URL)`); if the macro cannot resolve the value to a string
-///   literal at compile time, it will emit an error rather than render the URL text.
+/// - `url = "https://..."`: fetched at compile time (disabled in rust-analyzer). Literal-like
+///   wrappers such as `url = String::from("https://...")`, raw strings
+///   (`url = r#"https://..."#`), or simple `format!` calls with literal parts
+///   (including `format!("https://host/{}", slug)` where `slug` itself comes from a
+///   literal binding) are also resolved when possible. If the value cannot be resolved
+///   to a literal at compile time, the macro falls back to treating the expression as a
+///   dynamic Markdown string, equivalent to calling `markdown_view!(expr)` without `url =`.
 /// - Any other expression: rendered at runtime; `{{ ... }}` blocks are expanded by the
 ///   runtime parser so inline components render even when the string is only known at runtime.
 ///
@@ -1406,6 +1413,40 @@ mod tests {
             }
             _ => panic!("expected url literal from format! with arg"),
         }
+    }
+
+    #[test]
+    fn macro_accepts_url_string_from_literal() {
+        let parsed: Source =
+            syn::parse_str(r#"url = String::from("https://example.com/readme.md")"#).unwrap();
+        match parsed {
+            Source::Url(lit) => {
+                assert_eq!(lit.value(), "https://example.com/readme.md");
+            }
+            _ => panic!("expected url literal from String::from"),
+        }
+    }
+
+    #[test]
+    fn macro_accepts_url_raw_string_literal() {
+        let parsed: Source =
+            syn::parse_str(r##"url = r#"https://example.com/readme.md"#"##).unwrap();
+        match parsed {
+            Source::Url(lit) => {
+                assert_eq!(lit.value(), "https://example.com/readme.md");
+            }
+            _ => panic!("expected url literal from raw string"),
+        }
+    }
+
+    #[test]
+    fn macro_url_falls_back_to_dynamic_when_not_literal_like() {
+        // `slug` is unresolved in this standalone parse, so the expression cannot
+        // be reduced to a literal; we should treat it as a dynamic expression
+        // rather than erroring.
+        let parsed: Source =
+            syn::parse_str(r#"url = format!("https://example.com/posts/{}", slug)"#).unwrap();
+        assert!(matches!(parsed, Source::Dynamic(_)));
     }
 
     #[test]
