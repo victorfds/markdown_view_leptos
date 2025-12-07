@@ -241,11 +241,7 @@ fn Counter() -> impl IntoView {
 
 #[component]
 pub fn HebrewBlock(children: Children) -> impl IntoView {
-    view! {
-        <div dir="rtl" class="font-hebrew">
-            {children()}
-        </div>
-    }
+    view! { <div dir="rtl">{children()}</div> }
 }
 
 #[component]

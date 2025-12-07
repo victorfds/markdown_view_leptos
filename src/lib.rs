@@ -418,8 +418,7 @@ fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
                                 lit: Lit::Str(s), ..
                             }) => return Some(s),
                             Expr::Path(path)
-                                if path.qself.is_none()
-                                    && path.path.segments.len() == 1 =>
+                                if path.qself.is_none() && path.path.segments.len() == 1 =>
                             {
                                 let ident = &path.path.segments[0].ident;
                                 if let Some(lit) =
@@ -555,21 +554,160 @@ fn resolve_ident_literal_from_source(
     ident: &Ident,
     usage_span: proc_macro2::Span,
 ) -> Option<LitStr> {
-    // Best-effort: scan the same source file for the nearest non-mut string binding
-    // of this identifier that appears before the macro invocation.
+    // Best-effort: scan the same source file for the nearest non-mut string
+    // binding of this identifier that appears before the macro invocation.
     let path = usage_span.local_file()?;
     let source = fs::read_to_string(&path).ok()?;
-    let file = syn::parse_file(&source).ok()?;
-    let mut finder = BindingFinder {
-        target: ident.to_string(),
-        usage_span,
-        usage_start: usage_span.start(),
-        best: None,
-    };
-    finder.visit_file(&file);
-    finder
-        .best
-        .map(|(_, lit)| LitStr::new(&lit.value(), usage_span))
+
+    // First, try the AST-based heuristic used originally (covers `const`/`static`
+    // and some simple locals when spans line up).
+    if let Ok(file) = syn::parse_file(&source) {
+        let mut finder = BindingFinder {
+            target: ident.to_string(),
+            usage_span,
+            usage_start: usage_span.start(),
+            best: None,
+        };
+        finder.visit_file(&file);
+        if let Some((_, lit)) = finder.best {
+            return Some(LitStr::new(&lit.value(), usage_span));
+        }
+    }
+
+    // Fallback: a lightweight textual scan that looks only at lines before the
+    // macro usage, so that common patterns like
+    //
+    //   let url: String = String::from("https://...");
+    //
+    // are recognised even when span information from `syn::parse_file` does not
+    // correspond to the original file layout.
+    let ident_name = ident.to_string();
+    let usage_line = usage_span.start().line as usize;
+    if usage_line == 0 {
+        return None;
+    }
+
+    let mut last_value: Option<String> = None;
+    for (idx, line) in source.lines().enumerate() {
+        let line_no = idx + 1;
+        if line_no >= usage_line {
+            break;
+        }
+
+        // Skip lines that obviously don't mention the identifier.
+        if !line.contains(&ident_name) {
+            continue;
+        }
+
+        let trimmed = line.trim_start();
+        let eq_idx = match trimmed.find('=') {
+            Some(i) => i,
+            None => continue,
+        };
+        let (lhs, rhs_with_eq) = trimmed.split_at(eq_idx);
+        let lhs = lhs.trim_end();
+        let rhs = rhs_with_eq[1..].trim_start(); // skip '='
+
+        // Extract the binding name from the left-hand side. We support common
+        // patterns such as:
+        //   let name: Type = ...;
+        //   const NAME: &str = ...;
+        //   static NAME: &str = ...;
+        //   pub const NAME: &str = ...;
+        //   pub static NAME: &str = ...;
+        let mut words = lhs
+            .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+            .filter(|w| !w.is_empty());
+
+        let first = match words.next() {
+            Some(w) => w,
+            None => continue,
+        };
+
+        let binding_name = match first {
+            "let" | "const" | "static" => {
+                let mut name = match words.next() {
+                    Some(w) => w,
+                    None => continue,
+                };
+                if name == "mut" {
+                    name = match words.next() {
+                        Some(w) => w,
+                        None => continue,
+                    };
+                }
+                name
+            }
+            "pub" => {
+                let kw = match words.next() {
+                    Some(w) => w,
+                    None => continue,
+                };
+                if kw != "let" && kw != "const" && kw != "static" {
+                    continue;
+                }
+                let mut name = match words.next() {
+                    Some(w) => w,
+                    None => continue,
+                };
+                if name == "mut" {
+                    name = match words.next() {
+                        Some(w) => w,
+                        None => continue,
+                    };
+                }
+                name
+            }
+            _ => continue,
+        };
+
+        if binding_name != ident_name {
+            continue;
+        }
+
+        let rhs_trimmed = rhs.trim_end();
+        if rhs_trimmed.is_empty() {
+            continue;
+        }
+
+        if let Some(value) = extract_simple_string_literal(rhs_trimmed) {
+            last_value = Some(value);
+        }
+    }
+
+    last_value.map(|val| LitStr::new(&val, usage_span))
+}
+
+fn extract_simple_string_literal(rhs: &str) -> Option<String> {
+    let rhs = rhs.trim();
+
+    // Handle `String::from("...")` and `std::string::String::from("...")`-like patterns.
+    if let Some(idx) = rhs.find("String::from(\"") {
+        let start = idx + "String::from(\"".len();
+        let rest = &rhs[start..];
+        if let Some(end_rel) = rest.find('"') {
+            let value = &rest[..end_rel];
+            return Some(value.to_string());
+        }
+    }
+
+    // Fallback: a bare `"..."` string literal on the line.
+    if let Some(start) = rhs.find('"') {
+        let rest = &rhs[start + 1..];
+        if let Some(end_rel) = rest.find('"') {
+            let value = &rest[..end_rel];
+            return Some(value.to_string());
+        }
+    }
+
+    // As a final heuristic, treat a bare, URL‑like value with no quotes or
+    // whitespace as a simple literal. This mainly covers cases where the caller
+    // already passes the concrete string value (for example, `"https://..."`).
+    if !rhs.contains('"') && rhs.contains("://") && rhs.split_whitespace().count() == 1 {
+        return Some(rhs.to_string());
+    }
+
+    None
 }
 
 fn resolve_expr_to_lit(expr: &Expr) -> Option<LitStr> {
@@ -1206,6 +1344,20 @@ mod tests {
             Source::Inline(lit) => assert_eq!(lit.value(), "Owned"),
             _ => panic!("expected literal variant"),
         }
+    }
+
+    #[test]
+    fn extract_simple_string_literal_parses_string_from() {
+        let rhs = r#"String::from("http://example.com/path")"#;
+        let extracted = extract_simple_string_literal(rhs).expect("should extract");
+        assert_eq!(extracted, "http://example.com/path");
+    }
+
+    #[test]
+    fn extract_simple_string_literal_parses_example_url() {
+        let rhs = String::from("https://example.com/abc");
+        let extracted = extract_simple_string_literal(rhs.as_str()).expect("should extract");
+        assert_eq!(extracted, "https://example.com/abc");
     }
 
     #[test]
