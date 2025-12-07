@@ -411,8 +411,9 @@ fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
         }
         Expr::Macro(mac) => {
             if mac.mac.path.is_ident("format") {
-                if let Ok(fmt) = syn::parse2::<FormatMacroNoArgs>(mac.mac.tokens.clone()) {
-                    if !fmt.has_args {
+                if let Ok(fmt) = syn::parse2::<FormatMacro>(mac.mac.tokens.clone()) {
+                    // Simple cases: `format!("literal")` and `format!(IDENT)`.
+                    if fmt.args.is_empty() {
                         match fmt.fmt {
                             Expr::Lit(ExprLit {
                                 lit: Lit::Str(s), ..
@@ -428,6 +429,55 @@ fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
                                 }
                             }
                             _ => {}
+                        }
+                    } else {
+                        // Heuristic: if the format string is a simple literal with `{}` placeholders
+                        // and all arguments resolve to string literals, build a combined literal.
+                        if let Expr::Lit(ExprLit {
+                            lit: Lit::Str(fmt_lit),
+                            ..
+                        }) = &fmt.fmt
+                        {
+                            let fmt_value = fmt_lit.value();
+                            let mut pieces: Vec<String> = Vec::new();
+                            let mut placeholders = 0usize;
+                            let mut current = String::new();
+                            let mut chars = fmt_value.chars().peekable();
+                            while let Some(ch) = chars.next() {
+                                if ch == '{' {
+                                    // Only accept a bare `{}` placeholder; anything else (named
+                                    // arguments, formatting flags, or escaped braces) is treated as
+                                    // too complex for literal resolution.
+                                    if chars.peek() == Some(&'}') {
+                                        chars.next();
+                                        pieces.push(std::mem::take(&mut current));
+                                        placeholders += 1;
+                                    } else {
+                                        // Unsupported formatting pattern.
+                                        return None;
+                                    }
+                                } else if ch == '}' {
+                                    // Unmatched closing brace.
+                                    return None;
+                                } else {
+                                    current.push(ch);
+                                }
+                            }
+                            pieces.push(current);
+
+                            if placeholders != fmt.args.len() {
+                                return None;
+                            }
+
+                            let mut out = String::new();
+                            for (idx, piece) in pieces.iter().enumerate() {
+                                out.push_str(piece);
+                                if idx < fmt.args.len() {
+                                    let arg_lit = resolve_expr_to_lit(&fmt.args[idx])?;
+                                    out.push_str(&arg_lit.value());
+                                }
+                            }
+                            return Some(LitStr::new(&out, fmt_lit.span()));
                         }
                     }
                 }
@@ -729,21 +779,28 @@ fn resolve_expr_to_lit(expr: &Expr) -> Option<LitStr> {
     }
 }
 
-struct FormatMacroNoArgs {
+struct FormatMacro {
     fmt: Expr,
-    has_args: bool,
+    args: Vec<Expr>,
 }
 
-impl Parse for FormatMacroNoArgs {
+impl Parse for FormatMacro {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let fmt: Expr = input.parse()?;
-        let has_args = if input.peek(Token![,]) {
+        let mut args = Vec::new();
+        if input.peek(Token![,]) {
             let _: Token![,] = input.parse()?;
-            !input.is_empty()
-        } else {
-            false
-        };
-        Ok(Self { fmt, has_args })
+            while !input.is_empty() {
+                let arg: Expr = input.parse()?;
+                args.push(arg);
+                if input.peek(Token![,]) {
+                    let _: Token![,] = input.parse()?;
+                } else {
+                    break;
+                }
+            }
+        }
+        Ok(Self { fmt, args })
     }
 }
 
@@ -1334,6 +1391,20 @@ mod tests {
         match parsed {
             Source::Url(lit) => assert!(lit.value().contains("https://example.com")),
             _ => panic!("expected url literal via clone()"),
+        }
+    }
+
+    #[test]
+    fn macro_accepts_url_format_with_literal_arg() {
+        let parsed: Source = syn::parse_str(
+            r#"url = format!("https://example.com/posts/{}", "slug")"#,
+        )
+        .unwrap();
+        match parsed {
+            Source::Url(lit) => {
+                assert_eq!(lit.value(), "https://example.com/posts/slug");
+            }
+            _ => panic!("expected url literal from format! with arg"),
         }
     }
 
