@@ -344,7 +344,9 @@ impl Parse for Source {
                 }
                 "url" => match resolve_expr_to_lit(&expr) {
                     Some(lit) => Ok(Source::Url(lit)),
-                    None => Err(input.error("markdown_view!: `url` expects a string literal")),
+                    None => Err(input.error(
+                        "markdown_view!: `url` expects a string literal or literal-like binding",
+                    )),
                 },
                 _ => {
                     Err(input.error("markdown_view!: expected `file`, `path`, or `url` before `=`"))
@@ -397,15 +399,14 @@ fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
             }
         }
         Expr::MethodCall(method) => {
-            let name = method.method.to_string();
-            if (name != "to_string" && name != "to_owned") || !method.args.is_empty() {
-                return None;
-            }
-            match method.receiver.as_ref() {
-                Expr::Lit(ExprLit {
-                    lit: Lit::Str(s), ..
-                }) => Some(s.clone()),
-                _ => None,
+            if method.args.is_empty() {
+                // Treat zero-arg method calls as transparent wrappers around the
+                // receiver when resolving literals. This lets patterns like
+                // `"url".to_string()`, `"url".clone()`, or `URL_CONST.clone()`
+                // still be recognised as literal-like at compile time.
+                resolve_expr_to_lit(method.receiver.as_ref())
+            } else {
+                None
             }
         }
         Expr::Macro(mac) => {
@@ -656,7 +657,10 @@ impl Parse for MacroArgs {
 /// - `file = some_var`: if the macro can see a real file at that path while compiling
 ///   (e.g., `let content = "content.md";` in the same module), it embeds the file like
 ///   the literal form. Otherwise it falls back to reading at runtime (non-wasm only).
-/// - `url = "https://..."`: fetched at compile time (disabled in rust-analyzer).
+/// - `url = "https://..."`: fetched at compile time (disabled in rust-analyzer). You can
+///   also use literal-like bindings (e.g. `const URL: &str = "https://...";` then
+///   `markdown_view!(url = URL)`); if the macro cannot resolve the value to a string
+///   literal at compile time, it will emit an error rather than render the URL text.
 /// - Any other expression: rendered at runtime; `{{ ... }}` blocks are expanded by the
 ///   runtime parser so inline components render even when the string is only known at runtime.
 ///
@@ -1182,6 +1186,16 @@ mod tests {
         match parsed {
             Source::Url(lit) => assert!(lit.value().contains("https://example.com")),
             _ => panic!("expected url literal"),
+        }
+    }
+
+    #[test]
+    fn macro_accepts_url_clone_on_literal() {
+        let parsed: Source =
+            syn::parse_str(r#"url = "https://example.com/readme.md".clone()"#).unwrap();
+        match parsed {
+            Source::Url(lit) => assert!(lit.value().contains("https://example.com")),
+            _ => panic!("expected url literal via clone()"),
         }
     }
 
