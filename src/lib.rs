@@ -412,7 +412,23 @@ fn extract_str_literal(expr: &Expr) -> Option<LitStr> {
             if mac.mac.path.is_ident("format") {
                 if let Ok(fmt) = syn::parse2::<FormatMacroNoArgs>(mac.mac.tokens.clone()) {
                     if !fmt.has_args {
-                        return Some(fmt.fmt);
+                        match fmt.fmt {
+                            Expr::Lit(ExprLit {
+                                lit: Lit::Str(s), ..
+                            }) => return Some(s),
+                            Expr::Path(path)
+                                if path.qself.is_none()
+                                    && path.path.segments.len() == 1 =>
+                            {
+                                let ident = &path.path.segments[0].ident;
+                                if let Some(lit) =
+                                    resolve_ident_literal_from_source(ident, expr.span())
+                                {
+                                    return Some(lit);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -575,13 +591,13 @@ fn resolve_expr_to_lit(expr: &Expr) -> Option<LitStr> {
 }
 
 struct FormatMacroNoArgs {
-    fmt: LitStr,
+    fmt: Expr,
     has_args: bool,
 }
 
 impl Parse for FormatMacroNoArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let fmt: LitStr = input.parse()?;
+        let fmt: Expr = input.parse()?;
         let has_args = if input.peek(Token![,]) {
             let _: Token![,] = input.parse()?;
             !input.is_empty()

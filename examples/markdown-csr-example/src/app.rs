@@ -240,19 +240,28 @@ fn Counter() -> impl IntoView {
 }
 
 #[component]
+pub fn HebrewBlock(children: Children) -> impl IntoView {
+    view! {
+        <div dir="rtl" class="font-hebrew">
+            {children()}
+        </div>
+    }
+}
+
+#[component]
 pub fn App() -> impl IntoView {
-    let content = r"# Markdown CSR Example 
+    let content = r#"# Markdown CSR Example 
     This is a {{ <Counter /> }} inside markdown!
     Leptos is great
         
      - Rust is great
      - Leptos is great
-
-     Enjoy using Leptos with Dynamic Markdown!";
+{{ <HebrewBlock>"ישב בסתר עליון בצל שדי יתלונן"</HebrewBlock> }}
+     Enjoy using Leptos with Dynamic Markdown!"#;
 
     view! {
         <main style="font-family:system-ui, sans-serif; color:#e2e8f0; background:#0b1020; min-height:100vh; padding:24px;">
-            {markdown_view!(content)} {markdown_view!(file = "content.md")}
+            {markdown_view!(&content)} {markdown_view!(file = "content.md")}
         </main>
     }
 }
