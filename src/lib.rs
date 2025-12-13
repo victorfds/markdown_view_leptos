@@ -48,7 +48,7 @@
 
 use proc_macro::TokenStream;
 // no extra items from proc_macro needed beyond TokenStream
-use proc_macro2::{LineColumn, TokenStream as TokenStream2};
+use proc_macro2::{Group, LineColumn, Span, TokenStream as TokenStream2, TokenTree};
 use pulldown_cmark::{html, Options, Parser};
 use quote::quote;
 use std::env;
@@ -185,11 +185,17 @@ fn split_markdown_with_components(input: impl AsRef<str>) -> Vec<Segment> {
                     }
                 }
                 // parse component snippet
-                let inner = input[comp_start..comp_end].trim();
+                let inner_raw = &input[comp_start..comp_end];
+                let inner = inner_raw.trim();
                 if !inner.is_empty() {
-                    match inner.parse::<TokenStream2>() {
-                        Ok(ts) => segments.push(Segment::Component(ts)),
-                        Err(_) => {
+                    let sanitized = sanitize_component_snippet(inner);
+                    let parsed = std::panic::catch_unwind(|| sanitized.parse::<TokenStream2>());
+                    match parsed {
+                        Ok(Ok(ts)) => {
+                            let normalized = normalize_component_tokens(ts);
+                            segments.push(Segment::Component(normalized));
+                        }
+                        _ => {
                             // Gracefully fall back to rendering literally.
                             segments.push(Segment::Markdown(format!("{{{{{inner}}}}}")));
                         }
@@ -256,6 +262,109 @@ fn raw_string_literal_tokens(value: &str) -> TokenStream2 {
     literal
         .parse::<TokenStream2>()
         .expect("raw string literal should always parse")
+}
+
+fn normalize_component_tokens(stream: TokenStream2) -> TokenStream2 {
+    fn normalize_stream(stream: TokenStream2) -> TokenStream2 {
+        stream
+            .into_iter()
+            .map(|tt| match tt {
+                TokenTree::Group(g) => {
+                    let inner = normalize_stream(g.stream());
+                    let mut new_group = Group::new(g.delimiter(), inner);
+                    new_group.set_span(Span::call_site());
+                    TokenTree::Group(new_group)
+                }
+                TokenTree::Ident(mut ident) => {
+                    ident.set_span(Span::call_site());
+                    TokenTree::Ident(ident)
+                }
+                TokenTree::Punct(mut punct) => {
+                    punct.set_span(Span::call_site());
+                    TokenTree::Punct(punct)
+                }
+                TokenTree::Literal(mut lit) => {
+                    lit.set_span(Span::call_site());
+                    TokenTree::Literal(lit)
+                }
+            })
+            .collect()
+    }
+
+    normalize_stream(stream)
+}
+
+fn sanitize_component_snippet(inner: &str) -> String {
+    let mut out = String::new();
+    let mut text_buf = String::new();
+    let mut in_tag = false;
+
+    let mut chars = inner.chars().peekable();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '<' => {
+                if !text_buf.is_empty() {
+                    if text_buf.chars().any(|c| !c.is_whitespace()) {
+                        if !text_buf.contains('"') {
+                            let mut escaped = String::new();
+                            for t in text_buf.chars() {
+                                match t {
+                                    '\\' => escaped.push_str("\\\\"),
+                                    '"' => escaped.push_str("\\\""),
+                                    _ => escaped.push(t),
+                                }
+                            }
+                            out.push('"');
+                            out.push_str(&escaped);
+                            out.push('"');
+                        } else {
+                            out.push_str(&text_buf);
+                        }
+                    } else {
+                        out.push_str(&text_buf);
+                    }
+                    text_buf.clear();
+                }
+                in_tag = true;
+                out.push('<');
+            }
+            '>' => {
+                in_tag = false;
+                out.push('>');
+            }
+            _ => {
+                if in_tag {
+                    out.push(ch);
+                } else {
+                    text_buf.push(ch);
+                }
+            }
+        }
+    }
+
+    if !text_buf.is_empty() {
+        if text_buf.chars().any(|c| !c.is_whitespace()) {
+            if !text_buf.contains('"') {
+                let mut escaped = String::new();
+                for t in text_buf.chars() {
+                    match t {
+                        '\\' => escaped.push_str("\\\\"),
+                        '"' => escaped.push_str("\\\""),
+                        _ => escaped.push(t),
+                    }
+                }
+                out.push('"');
+                out.push_str(&escaped);
+                out.push('"');
+            } else {
+                out.push_str(&text_buf);
+            }
+        } else {
+            out.push_str(&text_buf);
+        }
+    }
+
+    out
 }
 
 #[derive(Debug)]
@@ -863,13 +972,18 @@ impl Parse for MacroArgs {
 ///   literal binding) are also resolved when possible. If the value cannot be resolved
 ///   to a literal at compile time, the macro falls back to treating the expression as a
 ///   dynamic Markdown string, equivalent to calling `markdown_view!(expr)` without `url =`.
-/// - Any other expression: rendered at runtime; `{{ ... }}` blocks are expanded by the
-///   runtime parser so inline components render even when the string is only known at runtime.
+/// - Any other expression: rendered at runtime using a lightweight, dependency-free
+///   Markdown parser. Inline `{{ ... }}` component syntax is **not** expanded in this
+///   mode; it is rendered as literal text. To use `{{ <MyComponent/> }}` you must pass
+///   a source that can be resolved to a string literal or file path at compile time so
+///   the macro can split the Markdown and inject real Leptos components.
 ///
 /// Inline Leptos components:
 /// - Use `{{ ... }}` inside the Markdown: `{{ <MyComponent prop=value/> }}`.
-/// - Component expansion always happens: compile-time sources expand up front, while
-///   runtime `String` inputs are parsed on the fly so `{{ ... }}` keeps working.
+/// - Component expansion only happens for sources that are resolved at compile time
+///   (inline literals, `file = "..."`, or identifiers that the macro can trace back to
+///   a literal binding in the same file). Dynamic `String` inputs are rendered purely
+///   as Markdown/HTML without interpreting `{{ ... }}`.
 ///
 /// Option:
 /// - `strip_front_matter = true,`: drop a leading `--- ... ---` YAML block before rendering.
@@ -1523,6 +1637,58 @@ mod tests {
         assert!(matches!(segments[0], Segment::Markdown(_)));
         assert!(matches!(segments[1], Segment::Component(_)));
         assert!(matches!(segments[2], Segment::Markdown(_)));
+    }
+
+    #[test]
+    fn split_handles_hebrew_block_multiline_with_nested_tags() {
+        let input = r#"
+Before
+
+{{
+ <HebrewBlock> 
+    <ruby>ישב<rp>(</rp><rt>yoshev</rt><rp>)</rp></ruby>
+    <ruby>בסתר<rp>(</rp><rt>beseter</rt><rp>)</rp></ruby>
+    <ruby>עליון<rp>(</rp><rt>elyon</rt><rp>)</rp></ruby>
+    <ruby>בצל<rp>(</rp><rt>betzel</rt><rp>)</rp></ruby>
+    <ruby>שדי<rp>(</rp><rt>shaddai</rt><rp>)</rp></ruby>
+    <ruby>יתלונן<rp>(</rp><rt>yitlonan</rt><rp>)</rp></ruby>
+    </HebrewBlock> 
+}}
+
+After
+"#;
+        let segments = split_markdown_with_components(input);
+        assert!(segments.iter().any(|s| matches!(s, Segment::Component(_))));
+    }
+
+    #[test]
+    fn parses_multiline_hebrew_block_tokens() {
+        let inner = r#"
+ <HebrewBlock> 
+    <ruby>ישב<rp>(</rp><rt>yoshev</rt><rp>)</rp></ruby>
+    <ruby>בסתר<rp>(</rp><rt>beseter</rt><rp>)</rp></ruby>
+    <ruby>עליון<rp>(</rp><rt>elyon</rt><rp>)</rp></ruby>
+    <ruby>בצל<rp>(</rp><rt>betzel</rt><rp>)</rp></ruby>
+    <ruby>שדי<rp>(</rp><rt>shaddai</rt><rp>)</rp></ruby>
+    <ruby>יתלונן<rp>(</rp><rt>yitlonan</rt><rp>)</rp></ruby>
+ </HebrewBlock> 
+"#;
+        let _ts: TokenStream2 = inner.parse().expect("should parse multiline HebrewBlock");
+    }
+
+    #[test]
+    fn split_handles_hebrew_block_inline_with_nested_tags() {
+        let input = r#"Text before {{ <HebrewBlock> <ruby>ישב<rp>(</rp><rt>yoshev</rt><rp>)</rp></ruby> </HebrewBlock> }} text after"#;
+        let segments = split_markdown_with_components(input);
+        assert!(segments.iter().any(|s| matches!(s, Segment::Component(_))));
+    }
+
+    #[test]
+    fn split_handles_hebrew_block_with_inline_text() {
+        let input = r#"{{ <HebrewBlock> בְּרֵאשִׁית בָּרָא אֱלֹהִים אֵת הַשָּׁמַיִם וְאֵת הָאָרֶץ </HebrewBlock> }}"#;
+        let segments = split_markdown_with_components(input);
+        assert_eq!(segments.len(), 1);
+        assert!(matches!(segments[0], Segment::Component(_)));
     }
 
     #[test]
