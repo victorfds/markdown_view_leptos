@@ -152,6 +152,72 @@ Body text goes here.
 );
 ```
 
+## Options: heading anchors
+
+Headings get IDs plus an anchor link (rendered before the heading text). Customize or disable:
+
+```rust
+let view = markdown_view!(
+    file = "content.md",
+    anchor = true,
+    anchor_class = "my-anchor",
+    anchor_style = "color: #f40;",
+    anchor_symbol = "§"
+);
+```
+
+To disable anchor links (IDs still render for deep links):
+
+```rust
+let view = markdown_view!(
+    file = "content.md",
+    anchor = false
+);
+```
+
+Anchor styling is handled via CSS. A VitePress-like pattern:
+
+```css
+.markdown-view { --mdv-anchor-color: #6b7280; --mdv-anchor-hover-color: #111827; }
+.markdown-view :is(h1, h2, h3, h4, h5, h6) { position: relative; }
+.markdown-view .header-anchor {
+  position: absolute;
+  left: -0.9em;
+  opacity: 0;
+  text-decoration: none;
+  color: var(--mdv-anchor-color);
+  transition: opacity 0.15s ease, color 0.15s ease;
+}
+.markdown-view :is(h1, h2, h3, h4, h5, h6):hover .header-anchor {
+  opacity: 1;
+  color: var(--mdv-anchor-hover-color);
+}
+```
+
+## Utility: collect anchors
+
+Use `markdown_anchors!` to get all heading `(title, id)` pairs (for TOCs or navigation):
+
+```rust
+use markdown_view_leptos::markdown_anchors;
+
+let anchors = markdown_anchors!(r#"
+# Getting Started
+## Install
+## Install {#custom-install}
+"#);
+// anchors == [
+//   ("Getting Started", "getting-started"),
+//   ("Install", "install"),
+//   ("Install", "custom-install")
+// ]
+
+let toc = anchors
+    .iter()
+    .map(|(title, id)| format!("<li><a href=\"#{}\">{}</a></li>", id, title))
+    .collect::<String>();
+```
+
 ## Example
 
 This repo includes a CSR example (Trunk):

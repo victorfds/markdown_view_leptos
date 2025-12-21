@@ -256,7 +256,7 @@ pub fn App() -> impl IntoView {
      Enjoy using Leptos with Dynamic Markdown!"#;
 
     view! {
-        <main style="font-family:system-ui, sans-serif; color:#e2e8f0; background:#0b1020; min-height:100vh; padding:24px;">
+        <main class="markdown-view" style="font-family:system-ui, sans-serif; color:#e2e8f0; background:#0b1020; min-height:100vh; padding:24px;">
             {markdown_view!(&content)} {markdown_view!(file = "content.md")}
         </main>
     }
