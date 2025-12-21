@@ -154,7 +154,7 @@ Body text goes here.
 
 ## Options: heading anchors
 
-Headings get IDs plus an anchor link (rendered before the heading text). Customize or disable:
+Headings get IDs plus an anchor link (rendered before the heading text). IDs are slugified by lowercasing, stripping accents, and replacing non-alphanumeric runs with `-` (for example, `Último parágrafo` becomes `ultimo-paragrafo`). Customize or disable:
 
 ```rust
 let view = markdown_view!(
@@ -196,7 +196,7 @@ Anchor styling is handled via CSS. A VitePress-like pattern:
 
 ## Utility: collect anchors
 
-Use `markdown_anchors!` to get all heading `(title, id)` pairs (for TOCs or navigation):
+Use `markdown_anchors!` to get all heading `(title, id)` pairs (for TOCs or navigation). The same slug rules apply when headings do not define a custom `{#id}`:
 
 ```rust
 use markdown_view_leptos::markdown_anchors;
