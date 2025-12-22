@@ -5,7 +5,7 @@ Compile-time Markdown to Leptos `view!` with MDX‑like inline components.
 - Inline components in Markdown using `{{ <MyComp prop=value/> }}`
 - Use string, `file = "..."`, or `url = "..."` sources
 - Fenced‑code aware: ignores `{{ ... }}` inside triple‑backtick code blocks
-- Works in CSR or SSR; no runtime parser cost in the browser
+- Works in CSR or SSR; compile-time sources avoid runtime parser cost in the browser
 
 > Security note: the generated HTML is injected via `inner_html`. Only use trusted Markdown or sanitize upstream.
 
@@ -13,6 +13,12 @@ Compile-time Markdown to Leptos `view!` with MDX‑like inline components.
 
 ```
 cargo add markdown_view_leptos
+```
+
+For runtime string rendering (dynamic inputs), also add:
+
+```
+cargo add pulldown-cmark
 ```
 
 For CSR (WASM):
@@ -60,7 +66,7 @@ pub fn App() -> impl IntoView {
 ### From a file
 `file` paths are resolved relative to your crate root (`CARGO_MANIFEST_DIR`). Literal paths are embedded at compile time so edits trigger recompiles.
 
-You can also point to a variable. If the macro can resolve it at compile time (e.g., `let content = "content.md";` or `format!("content.md")` where the file exists), it behaves like a literal path. Otherwise it falls back to reading at runtime (non-wasm only) and inline components are still resolved when the view renders.
+You can also point to a variable. If the macro can resolve it at compile time (e.g., `let content = "content.md";` or `format!("content.md")` where the file exists), it behaves like a literal path. Otherwise it falls back to reading at runtime (non-wasm only) and inline components are not expanded.
 
 ```rust
 let base = "/opt/articles";
@@ -82,12 +88,14 @@ Inline component: {{ <Hello/> }}
 let inline_view = markdown_view!(body); // components work: `body` is a literal binding
 
 let runtime_body: String = fetch_from_server();
-let runtime_view = markdown_view!(runtime_body); // runtime parsing, components expand at runtime
+let runtime_view = markdown_view!(runtime_body); // runtime parsing, `{{ ... }}` stays literal
 ```
 
 If the macro can see a string literal binding in the same file (as with `body` above),
 it inlines it so `{{ ... }}` components still render. Otherwise Markdown is rendered
-at runtime and `{{ ... }}` blocks are expanded there as well, so components always work.
+at runtime and `{{ ... }}` blocks stay literal text.
+
+When you use runtime strings, add `pulldown-cmark` to your app dependencies.
 
 ## From a URL (build‑time fetch)
 
@@ -109,48 +117,12 @@ pub fn App() -> impl IntoView {
 
 ## How it works
 
-- Markdown → HTML: Compile-time sources use `pulldown‑cmark` (tables, footnotes, strikethrough, task lists); runtime strings are parsed with a built-in lightweight renderer so no extra dependencies are needed. Injected via `inner_html` into a `view!` tree.
-- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree (for compile-time sources: string literal, `file`, `url`, or identifiers that resolve to literals in the same file). Runtime `String` inputs go through the lightweight renderer, which now also expands `{{ ... }}` so components work regardless of when the string is known.
+- Markdown → HTML: Compile-time sources use `pulldown‑cmark` with the full option set (definition lists, footnotes, GFM, math, heading attributes, metadata blocks, and more); runtime strings for `markdown_view!` also use `pulldown‑cmark`, so add `pulldown-cmark` to your app dependencies when rendering dynamic strings. Injected via `inner_html` into a `view!` tree.
+- Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree for compile-time sources (string literal, `file`, `url`, or identifiers that resolve to literals in the same file). Runtime `String` inputs render `{{ ... }}` literally.
 - Fenced code: Triple‑backtick fences (```) are respected; `{{ ... }}` inside them is ignored and rendered literally.
 - Parse fallback: If a snippet inside `{{ ... }}` doesn’t parse, it is rendered as plain Markdown so your build doesn’t fail unexpectedly.
-- Front matter: Pass `strip_front_matter = true` to drop a leading `--- ... ---` block (YAML-style) before rendering if you don't want it to show up.
-
-## Options: strip front matter
-
-When your Markdown carries YAML front matter, prefix the macro with `strip_front_matter = true` before the source.
-
-```rust
-use leptos::prelude::*;
-use markdown_view_leptos::markdown_view;
-
-#[component]
-pub fn Article() -> impl IntoView {
-    view! {
-        <article>
-            {markdown_view!(
-                strip_front_matter = true,
-                file = "content/hello-world.md"
-            )}
-        </article>
-    }
-}
-```
-
-The flag also works with inline strings:
-
-```rust
-let view = markdown_view!(
-    strip_front_matter = true,
-    r#"---
-title: Hello World
----
-
-# Hello World
-
-Body text goes here.
-"#
-);
-```
+- Metadata blocks: Compile-time sources honor YAML/TOML front matter (`---` or `+++`) via pulldown‑cmark’s metadata block options.
+- Anchor extraction: `markdown_anchors!` uses pulldown‑cmark both at compile time and at runtime for dynamic inputs, so heading attributes like `{#id .class}` are supported.
 
 ## Options: heading anchors
 
@@ -217,6 +189,8 @@ let toc = anchors
     .map(|(title, id)| format!("<li><a href=\"#{}\">{}</a></li>", id, title))
     .collect::<String>();
 ```
+
+When you pass a dynamic string expression to `markdown_anchors!`, the runtime path uses `pulldown-cmark` so heading attributes (like `{#id .class}`) are honored. Add `pulldown-cmark` to your app dependencies if you use dynamic inputs.
 
 ## Example
 

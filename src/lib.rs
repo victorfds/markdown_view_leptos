@@ -22,8 +22,8 @@
 //! - Remote `url = "..."` fetch happens at compile time and is disabled under
 //!   rust-analyzer to keep IDEs responsive. Prefer `file = "..."` for stability.
 //! - Dynamic sources (`markdown_view!(my_string)` or `file = format!(...)`) render
-//!   at runtime using a built-in fallback parser—no extra dependencies required
-//!   in your application for runtime Markdown rendering. If the macro can see a
+//!   at runtime using `pulldown-cmark`. Add `pulldown-cmark` to your application
+//!   dependencies when using runtime Markdown rendering. If the macro can see a
 //!   string literal binding in the same file (for example `let body = r#"..."#;`
 //!   followed by `markdown_view!(body)`), it treats it like an inline literal so
 //!   inline `{{ ... }}` components still expand.
@@ -61,45 +61,15 @@ use std::path::PathBuf;
 use syn::spanned::Spanned;
 use syn::visit::Visit;
 use syn::{
-    parse::discouraged::Speculative, parse::Parse, parse::ParseStream, parse_macro_input, Block,
-    Expr, ExprLit, Ident, ImplItemFn, ItemConst, ItemFn, ItemImpl, ItemMod, ItemStatic, Lit,
-    LitBool, LitStr, Local, Pat, StaticMutability, Token, TraitItemFn,
+    parse::Parse, parse::ParseStream, parse_macro_input, Block, Expr, ExprLit, Ident, ImplItemFn,
+    ItemConst, ItemFn, ItemImpl, ItemMod, ItemStatic, Lit, LitBool, LitStr, Local, Pat,
+    StaticMutability, Token, TraitItemFn,
 };
 
 fn is_rust_analyzer() -> bool {
     env::var_os("RUST_ANALYZER_INTERNALS_DO_NOT_USE").is_some()
         || env::var_os("RA_TEST").is_some()
         || env::var_os("RUST_ANALYZER").is_some()
-}
-
-fn strip_front_matter(input: &str) -> &str {
-    if !(input.starts_with("---\n") || input.starts_with("---\r\n")) {
-        return input;
-    }
-    let bytes = input.as_bytes();
-    let mut i = if input.starts_with("---\r\n") { 5 } else { 4 }; // position after opening line
-    while i + 3 <= bytes.len() {
-        if bytes[i..].starts_with(b"---") {
-            // Require preceding newline to avoid matching inline occurrences.
-            if i > 0 && bytes[i - 1] == b'\n' {
-                let after = i + 3;
-                if after <= bytes.len() {
-                    if bytes.get(after) == Some(&b'\r') && bytes.get(after + 1) == Some(&b'\n') {
-                        return &input[after + 2..];
-                    }
-                    if bytes.get(after) == Some(&b'\n') {
-                        return &input[after + 1..];
-                    }
-                    // End of string right after closing fence.
-                    if after == bytes.len() {
-                        return "";
-                    }
-                }
-            }
-        }
-        i += 1;
-    }
-    input
 }
 
 #[derive(Default)]
@@ -371,34 +341,20 @@ fn escape_html_attr(input: &str) -> String {
 }
 
 #[cfg(test)]
-fn collect_markdown_anchors(
-    markdown: impl AsRef<str>,
-    should_strip_front_matter: bool,
-) -> Vec<(String, String)> {
+fn collect_markdown_anchors(markdown: impl AsRef<str>) -> Vec<(String, String)> {
     let mut slugger = AnchorSlugger::default();
-    collect_markdown_anchors_with_slugger(markdown, should_strip_front_matter, &mut slugger)
+    collect_markdown_anchors_with_slugger(markdown, &mut slugger)
 }
 
 fn collect_markdown_anchors_with_slugger(
     markdown: impl AsRef<str>,
-    should_strip_front_matter: bool,
     slugger: &mut AnchorSlugger,
 ) -> Vec<(String, String)> {
-    let markdown = if should_strip_front_matter {
-        strip_front_matter(markdown.as_ref())
-    } else {
-        markdown.as_ref()
-    };
+    let markdown = markdown.as_ref();
     if markdown.trim().is_empty() {
         return Vec::new();
     }
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_FOOTNOTES);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TASKLISTS);
-    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
-    let parser = Parser::new_ext(markdown, options);
+    let parser = Parser::new_ext(markdown, Options::all());
     let mut anchors: Vec<(String, String)> = Vec::new();
     let mut iter = parser.into_iter();
     while let Some(event) = iter.next() {
@@ -428,38 +384,22 @@ fn collect_markdown_anchors_with_slugger(
 }
 
 #[cfg(test)]
-fn convert_markdown_to_html(markdown: impl AsRef<str>, should_strip_front_matter: bool) -> String {
+fn convert_markdown_to_html(markdown: impl AsRef<str>) -> String {
     let mut slugger = AnchorSlugger::default();
     let anchor_options = AnchorRenderOptions::default();
-    convert_markdown_to_html_with_slugger(
-        markdown,
-        should_strip_front_matter,
-        &mut slugger,
-        &anchor_options,
-    )
+    convert_markdown_to_html_with_slugger(markdown, &mut slugger, &anchor_options)
 }
 
 fn convert_markdown_to_html_with_slugger(
     markdown: impl AsRef<str>,
-    should_strip_front_matter: bool,
     slugger: &mut AnchorSlugger,
     anchor_options: &AnchorRenderOptions,
 ) -> String {
-    let markdown = if should_strip_front_matter {
-        strip_front_matter(markdown.as_ref())
-    } else {
-        markdown.as_ref()
-    };
+    let markdown = markdown.as_ref();
     if markdown.trim().is_empty() {
         return String::new();
     }
-    let mut options = Options::empty();
-    options.insert(Options::ENABLE_TABLES);
-    options.insert(Options::ENABLE_FOOTNOTES);
-    options.insert(Options::ENABLE_STRIKETHROUGH);
-    options.insert(Options::ENABLE_TASKLISTS);
-    options.insert(Options::ENABLE_HEADING_ATTRIBUTES);
-    let parser = Parser::new_ext(markdown, options);
+    let parser = Parser::new_ext(markdown, Options::all());
     let mut events: Vec<Event<'_>> = Vec::new();
     let mut iter = parser.into_iter();
     while let Some(event) = iter.next() {
@@ -774,7 +714,7 @@ enum Source {
     },
     FileExpr(Expr),
     Url(LitStr),
-    /// Any other expression; rendered at runtime without inline component expansion.
+    /// Any other expression; rendered at runtime (pulldown-cmark) without inline component expansion.
     Dynamic(Expr),
 }
 
@@ -875,7 +815,6 @@ impl Parse for Source {
 
 #[derive(Debug)]
 struct MacroArgs {
-    strip_front_matter: bool,
     source: Source,
     anchor: AnchorRenderOptions,
 }
@@ -1318,26 +1257,10 @@ impl Parse for FormatMacro {
 
 impl Parse for MacroArgs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
-        let mut strip_front_matter = false;
         let mut anchor_enabled: Option<bool> = None;
         let mut anchor_class: Option<String> = None;
         let mut anchor_style: Option<String> = None;
         let mut anchor_symbol: Option<String> = None;
-
-        // Optional `strip_front_matter = true/false,` prefix.
-        if input.peek(Ident) && input.peek2(Token![=]) {
-            let fork = input.fork();
-            let ident: Ident = fork.parse()?;
-            if ident == "strip_front_matter" {
-                fork.parse::<Token![=]>()?;
-                let flag: LitBool = fork.parse()?;
-                strip_front_matter = flag.value();
-                if fork.peek(Token![,]) {
-                    fork.parse::<Token![,]>()?;
-                }
-                input.advance_to(&fork);
-            }
-        }
 
         if input.is_empty() {
             return Err(input.error("markdown_view!: expected a source argument"));
@@ -1358,10 +1281,6 @@ impl Parse for MacroArgs {
             let ident: Ident = input.parse()?;
             input.parse::<Token![=]>()?;
             match ident.to_string().as_str() {
-                "strip_front_matter" => {
-                    let flag: LitBool = input.parse()?;
-                    strip_front_matter = flag.value();
-                }
                 "anchor" => {
                     let flag: LitBool = input.parse()?;
                     anchor_enabled = Some(flag.value());
@@ -1380,7 +1299,7 @@ impl Parse for MacroArgs {
                 }
                 _ => {
                     return Err(input.error(
-                        "markdown_view!: expected `strip_front_matter`, `anchor`, `anchor_class`, `anchor_style`, or `anchor_symbol`",
+                        "markdown_view!: expected `anchor`, `anchor_class`, `anchor_style`, or `anchor_symbol`",
                     ))
                 }
             }
@@ -1404,40 +1323,18 @@ impl Parse for MacroArgs {
             anchor.symbol = symbol;
         }
 
-        Ok(MacroArgs {
-            strip_front_matter,
-            source,
-            anchor,
-        })
+        Ok(MacroArgs { source, anchor })
     }
 }
 
 fn runtime_helpers_tokens() -> TokenStream2 {
     quote! {
-        fn __mdv_strip_front_matter(input: &str) -> &str {
-            if !(input.starts_with("---\n") || input.starts_with("---\r\n")) {
-                return input;
-            }
-            let bytes = input.as_bytes();
-            let mut i = if input.starts_with("---\r\n") { 5 } else { 4 };
-            while i + 3 <= bytes.len() {
-                if bytes[i..].starts_with(b"---") && i > 0 && bytes[i - 1] == b'\n' {
-                    let after = i + 3;
-                    if after <= bytes.len() {
-                        if bytes.get(after) == Some(&b'\r') && bytes.get(after + 1) == Some(&b'\n') {
-                            return &input[after + 2..];
-                        }
-                        if bytes.get(after) == Some(&b'\n') {
-                            return &input[after + 1..];
-                        }
-                        if after == bytes.len() {
-                            return "";
-                        }
-                    }
-                }
-                i += 1;
-            }
-            input
+        #[derive(Clone, Copy)]
+        struct __MdvAnchorOptions {
+            enabled: bool,
+            class: Option<&'static str>,
+            style: Option<&'static str>,
+            symbol: &'static str,
         }
         fn __mdv_escape_html(input: &str) -> String {
             let mut escaped = String::with_capacity(input.len());
@@ -1452,13 +1349,6 @@ fn runtime_helpers_tokens() -> TokenStream2 {
                 }
             }
             escaped
-        }
-        #[derive(Clone, Copy)]
-        struct __MdvAnchorOptions {
-            enabled: bool,
-            class: Option<&'static str>,
-            style: Option<&'static str>,
-            symbol: &'static str,
         }
         fn __mdv_render_anchor_html(id: &str, options: __MdvAnchorOptions) -> Option<String> {
             if !options.enabled || id.is_empty() {
@@ -1642,56 +1532,6 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 
             out
         }
-        fn __mdv_strip_inline_markdown(text: &str) -> String {
-            let mut out = String::new();
-            let mut chars = text.chars().peekable();
-            let mut code = false;
-
-            while let Some(ch) = chars.next() {
-                if code {
-                    if ch == '`' {
-                        code = false;
-                    } else {
-                        out.push(ch);
-                    }
-                    continue;
-                }
-
-                if ch == '`' {
-                    code = true;
-                    continue;
-                }
-
-                if ch == '*' {
-                    if chars.peek() == Some(&'*') {
-                        let _ = chars.next();
-                    }
-                    continue;
-                }
-
-                if ch == '~' && chars.peek() == Some(&'~') {
-                    let _ = chars.next();
-                    continue;
-                }
-
-                out.push(ch);
-            }
-
-            out
-        }
-        fn __mdv_split_heading_anchor(text: &str) -> (String, Option<String>) {
-            let trimmed = text.trim_end();
-            if let Some(start) = trimmed.rfind("{#") {
-                if trimmed.ends_with('}') && start + 2 < trimmed.len() {
-                    let id = &trimmed[start + 2..trimmed.len() - 1];
-                    if !id.is_empty() && !id.chars().any(|c| c.is_whitespace()) {
-                        let before = trimmed[..start].trim_end();
-                        return (before.to_string(), Some(id.to_string()));
-                    }
-                }
-            }
-            (trimmed.to_string(), None)
-        }
         struct __MdvAnchorSlugger {
             counts: ::std::collections::HashMap<String, usize>,
         }
@@ -1720,303 +1560,150 @@ fn runtime_helpers_tokens() -> TokenStream2 {
                 slug
             }
         }
-        fn __mdv_render_inline(text: &str) -> String {
-            let mut out = String::new();
-            let mut chars = text.chars().peekable();
-            let mut bold = false;
-            let mut italic = false;
-            let mut strike = false;
-            let mut code = false;
-
-            while let Some(ch) = chars.next() {
-                if code {
-                    if ch == '`' {
-                        code = false;
-                        out.push_str("</code>");
-                    } else {
-                        match ch {
-                            '&' => out.push_str("&amp;"),
-                            '<' => out.push_str("&lt;"),
-                            '>' => out.push_str("&gt;"),
-                            '"' => out.push_str("&quot;"),
-                            '\'' => out.push_str("&#39;"),
-                            _ => out.push(ch),
-                        }
+        fn __mdv_extract_heading_text(
+            events: &[::pulldown_cmark::Event<'_>],
+        ) -> ::std::string::String {
+            let mut text = ::std::string::String::new();
+            for event in events {
+                match event {
+                    ::pulldown_cmark::Event::Text(value)
+                    | ::pulldown_cmark::Event::Code(value) => {
+                        text.push_str(value.as_ref());
                     }
-                    continue;
-                }
-
-                if ch == '`' {
-                    code = true;
-                    out.push_str("<code>");
-                    continue;
-                }
-                if ch == '*' && chars.peek() == Some(&'*') {
-                    let _ = chars.next();
-                    if bold {
-                        out.push_str("</strong>");
-                    } else {
-                        out.push_str("<strong>");
+                    ::pulldown_cmark::Event::SoftBreak
+                    | ::pulldown_cmark::Event::HardBreak => {
+                        text.push(' ');
                     }
-                    bold = !bold;
-                    continue;
-                }
-                if ch == '*' {
-                    if italic {
-                        out.push_str("</em>");
-                    } else {
-                        out.push_str("<em>");
+                    ::pulldown_cmark::Event::InlineMath(value)
+                    | ::pulldown_cmark::Event::DisplayMath(value) => {
+                        text.push_str(value.as_ref());
                     }
-                    italic = !italic;
-                    continue;
-                }
-                if ch == '~' && chars.peek() == Some(&'~') {
-                    let _ = chars.next();
-                    if strike {
-                        out.push_str("</del>");
-                    } else {
-                        out.push_str("<del>");
-                    }
-                    strike = !strike;
-                    continue;
-                }
-
-                match ch {
-                    '&' => out.push_str("&amp;"),
-                    '<' => out.push_str("&lt;"),
-                    '>' => out.push_str("&gt;"),
-                    '"' => out.push_str("&quot;"),
-                    '\'' => out.push_str("&#39;"),
-                    _ => out.push(ch),
+                    _ => {}
                 }
             }
-
-            if code {
-                out.push_str("</code>");
-            }
-            if bold {
-                out.push_str("</strong>");
-            }
-            if italic {
-                out.push_str("</em>");
-            }
-            if strike {
-                out.push_str("</del>");
-            }
-
-            out
+            text
         }
         fn __mdv_render_markdown_to_html(
             markdown: impl AsRef<str>,
-            strip_front_matter: bool,
             anchor_options: __MdvAnchorOptions,
         ) -> String {
-            let markdown = if strip_front_matter {
-                __mdv_strip_front_matter(markdown.as_ref())
-            } else {
-                markdown.as_ref()
-            };
+            let markdown = markdown.as_ref();
             if markdown.trim().is_empty() {
                 return String::new();
             }
-
-            let mut html = String::new();
-            let mut in_code_block = false;
-            let mut list_kind: Option<char> = None; // 'u' unordered, 'o' ordered
-            let mut paragraph: Vec<String> = Vec::new();
+            let parser = ::pulldown_cmark::Parser::new_ext(
+                markdown,
+                ::pulldown_cmark::Options::all(),
+            );
+            let mut events: ::std::vec::Vec<::pulldown_cmark::Event<'_>> = ::std::vec::Vec::new();
+            let mut iter = parser.into_iter();
             let mut anchor_slugger = __MdvAnchorSlugger::new();
 
-            let mut flush_paragraph = |html: &mut String, paragraph: &mut Vec<String>| {
-                if paragraph.is_empty() {
-                    return;
-                }
-                let joined = paragraph.join(" ");
-                html.push_str("<p>");
-                html.push_str(&__mdv_render_inline(&joined));
-                html.push_str("</p>");
-                paragraph.clear();
-            };
-            let mut close_list = |html: &mut String, list_kind: &mut Option<char>| {
-                if let Some(kind) = *list_kind {
-                    if kind == 'o' {
-                        html.push_str("</ol>");
-                    } else {
-                        html.push_str("</ul>");
-                    }
-                    *list_kind = None;
-                }
-            };
-
-            for raw_line in markdown.lines() {
-                let line = raw_line.trim_end_matches('\r');
-                let trimmed = line.trim_start();
-
-                if trimmed.starts_with("```") {
-                    flush_paragraph(&mut html, &mut paragraph);
-                    close_list(&mut html, &mut list_kind);
-                    if in_code_block {
-                        html.push_str("</code></pre>");
-                        in_code_block = false;
-                    } else {
-                        in_code_block = true;
-                        html.push_str("<pre><code>");
-                    }
-                    continue;
-                }
-
-                if in_code_block {
-                    html.push_str(&__mdv_escape_html(line));
-                    html.push('\n');
-                    continue;
-                }
-
-                if trimmed.is_empty() {
-                    flush_paragraph(&mut html, &mut paragraph);
-                    close_list(&mut html, &mut list_kind);
-                    continue;
-                }
-
-                // Headings: up to 6 #'s followed by a space.
-                let mut hashes = 0usize;
-                for ch in trimmed.chars() {
-                    if ch == '#' {
-                        hashes += 1;
-                    } else {
-                        break;
-                    }
-                }
-                if hashes > 0 && hashes <= 6 && trimmed.chars().nth(hashes) == Some(' ') {
-                    flush_paragraph(&mut html, &mut paragraph);
-                    close_list(&mut html, &mut list_kind);
-                    let content = trimmed[hashes + 1..].trim_start();
-                    let (content, custom_anchor) = __mdv_split_heading_anchor(content);
-                    let plain = __mdv_strip_inline_markdown(&content);
-                    let anchor_id = if let Some(id) = custom_anchor {
-                        anchor_slugger.register_custom(&id);
-                        id
-                    } else {
-                        anchor_slugger.slugify(&plain)
-                    };
-                    let anchor_html = __mdv_render_anchor_html(&anchor_id, anchor_options);
-                    let rendered = __mdv_render_inline(&content);
-                    let level = hashes.to_string();
-                    html.push_str("<h");
-                    html.push_str(&level);
-                    if !anchor_id.is_empty() {
-                        html.push_str(" id=\"");
-                        html.push_str(&__mdv_escape_html(&anchor_id));
-                        html.push('"');
-                    }
-                    html.push('>');
-                    if let Some(anchor_html) = anchor_html {
-                        html.push_str(&anchor_html);
-                    }
-                    html.push_str(&rendered);
-                    html.push_str("</h");
-                    html.push_str(&level);
-                    html.push('>');
-                    continue;
-                }
-
-                // Unordered list items.
-                if let Some(rest) = trimmed
-                    .strip_prefix("- ")
-                    .or_else(|| trimmed.strip_prefix("* "))
-                    .or_else(|| trimmed.strip_prefix("+ "))
-                {
-                    flush_paragraph(&mut html, &mut paragraph);
-                    if list_kind != Some('u') {
-                        close_list(&mut html, &mut list_kind);
-                        html.push_str("<ul>");
-                        list_kind = Some('u');
-                    }
-                    html.push_str("<li>");
-                    html.push_str(&__mdv_render_inline(rest.trim()));
-                    html.push_str("</li>");
-                    continue;
-                }
-
-                // Ordered list items (1. Item).
-                if let Some(dot_idx) = trimmed.find(". ") {
-                    if trimmed[..dot_idx].chars().all(|c| c.is_ascii_digit()) {
-                        flush_paragraph(&mut html, &mut paragraph);
-                        if list_kind != Some('o') {
-                            close_list(&mut html, &mut list_kind);
-                            html.push_str("<ol>");
-                            list_kind = Some('o');
+            while let Some(event) = iter.next() {
+                match event {
+                    ::pulldown_cmark::Event::Start(::pulldown_cmark::Tag::Heading {
+                        level,
+                        id,
+                        classes,
+                        attrs,
+                    }) => {
+                        let mut inner_events: ::std::vec::Vec<::pulldown_cmark::Event<'_>> =
+                            ::std::vec::Vec::new();
+                        while let Some(inner) = iter.next() {
+                            if matches!(
+                                inner,
+                                ::pulldown_cmark::Event::End(
+                                    ::pulldown_cmark::TagEnd::Heading(_)
+                                )
+                            ) {
+                                break;
+                            }
+                            inner_events.push(inner);
                         }
-                        let rest = trimmed[dot_idx + 2..].trim();
-                        html.push_str("<li>");
-                        html.push_str(&__mdv_render_inline(rest));
-                        html.push_str("</li>");
-                        continue;
+
+                        let heading_text = __mdv_extract_heading_text(&inner_events);
+                        let anchor_id = if let Some(id) = id {
+                            let id_value = id.to_string();
+                            anchor_slugger.register_custom(&id_value);
+                            Some(id_value)
+                        } else {
+                            let slug = anchor_slugger.slugify(&heading_text);
+                            if slug.is_empty() { None } else { Some(slug) }
+                        };
+                        let heading_id = anchor_id
+                            .as_ref()
+                            .map(|id| ::pulldown_cmark::CowStr::from(id.clone()));
+                        let anchor_html = anchor_id
+                            .as_ref()
+                            .and_then(|id| __mdv_render_anchor_html(id, anchor_options));
+                        events.push(::pulldown_cmark::Event::Start(
+                            ::pulldown_cmark::Tag::Heading {
+                                level,
+                                id: heading_id,
+                                classes,
+                                attrs,
+                            },
+                        ));
+                        if let Some(anchor_html) = anchor_html {
+                            events.push(::pulldown_cmark::Event::Html(
+                                ::pulldown_cmark::CowStr::from(anchor_html),
+                            ));
+                        }
+                        events.extend(inner_events);
+                        events.push(::pulldown_cmark::Event::End(
+                            ::pulldown_cmark::TagEnd::Heading(level),
+                        ));
                     }
+                    _ => events.push(event),
                 }
-
-                paragraph.push(trimmed.to_string());
             }
 
-            if in_code_block {
-                html.push_str("</code></pre>");
-            }
-            flush_paragraph(&mut html, &mut paragraph);
-            close_list(&mut html, &mut list_kind);
-
-            html
+            let mut html_output = String::new();
+            ::pulldown_cmark::html::push_html(&mut html_output, events.into_iter());
+            html_output
         }
         fn __mdv_extract_anchors(
             markdown: impl AsRef<str>,
-            strip_front_matter: bool,
         ) -> ::std::vec::Vec<(::std::string::String, ::std::string::String)> {
-            let markdown = if strip_front_matter {
-                __mdv_strip_front_matter(markdown.as_ref())
-            } else {
-                markdown.as_ref()
-            };
+            let markdown = markdown.as_ref();
             if markdown.trim().is_empty() {
                 return ::std::vec::Vec::new();
             }
 
             let mut anchors: ::std::vec::Vec<(::std::string::String, ::std::string::String)> =
                 ::std::vec::Vec::new();
-            let mut in_code_block = false;
             let mut slugger = __MdvAnchorSlugger::new();
-
-            for raw_line in markdown.lines() {
-                let line = raw_line.trim_end_matches('\r');
-                let trimmed = line.trim_start();
-
-                if trimmed.starts_with("```") {
-                    in_code_block = !in_code_block;
-                    continue;
-                }
-                if in_code_block {
-                    continue;
-                }
-                if trimmed.is_empty() {
-                    continue;
-                }
-
-                let mut hashes = 0usize;
-                for ch in trimmed.chars() {
-                    if ch == '#' {
-                        hashes += 1;
-                    } else {
-                        break;
+            let parser = ::pulldown_cmark::Parser::new_ext(
+                markdown,
+                ::pulldown_cmark::Options::all(),
+            );
+            let mut iter = parser.into_iter();
+            while let Some(event) = iter.next() {
+                if let ::pulldown_cmark::Event::Start(::pulldown_cmark::Tag::Heading { id, .. }) =
+                    event
+                {
+                    let mut inner_events: ::std::vec::Vec<::pulldown_cmark::Event<'_>> =
+                        ::std::vec::Vec::new();
+                    while let Some(inner) = iter.next() {
+                        if matches!(
+                            inner,
+                            ::pulldown_cmark::Event::End(::pulldown_cmark::TagEnd::Heading(_))
+                        ) {
+                            break;
+                        }
+                        inner_events.push(inner);
                     }
-                }
-                if hashes > 0 && hashes <= 6 && trimmed.chars().nth(hashes) == Some(' ') {
-                    let content = trimmed[hashes + 1..].trim_start();
-                    let (content, custom_anchor) = __mdv_split_heading_anchor(content);
-                    let plain = __mdv_strip_inline_markdown(&content);
-                    let anchor_id = if let Some(id) = custom_anchor {
-                        slugger.register_custom(&id);
-                        id
+                    let heading_text = __mdv_extract_heading_text(&inner_events);
+                    let anchor_id = if let Some(id) = id {
+                        let id_value = id.to_string();
+                        slugger.register_custom(&id_value);
+                        Some(id_value)
                     } else {
-                        slugger.slugify(&plain)
+                        let slug = slugger.slugify(&heading_text);
+                        if slug.is_empty() { None } else { Some(slug) }
                     };
-                    if !anchor_id.is_empty() {
-                        anchors.push((plain.trim().to_string(), anchor_id));
+                    if let Some(id) = anchor_id {
+                        anchors.push((heading_text.trim().to_string(), id));
                     }
                 }
             }
@@ -2042,11 +1729,13 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 ///   literal binding) are also resolved when possible. If the value cannot be resolved
 ///   to a literal at compile time, the macro falls back to treating the expression as a
 ///   dynamic Markdown string, equivalent to calling `markdown_view!(expr)` without `url =`.
-/// - Any other expression: rendered at runtime using a lightweight, dependency-free
-///   Markdown parser. Inline `{{ ... }}` component syntax is **not** expanded in this
+/// - Any other expression: rendered at runtime using `pulldown-cmark` with the full
+///   option set (definition lists, footnotes, GFM, math, heading attributes, metadata
+///   blocks, and more). Inline `{{ ... }}` component syntax is **not** expanded in this
 ///   mode; it is rendered as literal text. To use `{{ <MyComponent/> }}` you must pass
 ///   a source that can be resolved to a string literal or file path at compile time so
-///   the macro can split the Markdown and inject real Leptos components.
+///   the macro can split the Markdown and inject real Leptos components. Add
+///   `pulldown-cmark` to your app dependencies when using runtime strings.
 ///
 /// Inline Leptos components:
 /// - Use `{{ ... }}` inside the Markdown: `{{ <MyComponent prop=value/> }}`.
@@ -2056,7 +1745,6 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 ///   as Markdown/HTML without interpreting `{{ ... }}`.
 ///
 /// Options:
-/// - `strip_front_matter = true,`: drop a leading `--- ... ---` YAML block before rendering.
 /// - `anchor = true/false,`: enable/disable heading anchor links (IDs are still generated).
 /// - `anchor_class = "...",`: override the CSS class for heading anchors.
 /// - `anchor_style = "...",`: set inline styles for heading anchors.
@@ -2071,16 +1759,12 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 /// let view = markdown_view!(file = content);          // resolves if file exists at build time
 /// let body = r#"Inline {{ <MyComp/> }} via variable."#;
 /// let inline_view = markdown_view!(body);             // still compile-time, components work
-/// let runtime_body: String = load_somehow();          // rendered at runtime, components expand
-/// let view_runtime = markdown_view!(runtime_body);    // runtime renderer handles `{{ ... }}`
+/// let runtime_body: String = load_somehow();          // rendered at runtime
+/// let view_runtime = markdown_view!(runtime_body);    // `{{ ... }}` stays literal
 /// ```
 #[proc_macro]
 pub fn markdown_view(input: TokenStream) -> TokenStream {
-    let MacroArgs {
-        strip_front_matter,
-        source: parsed,
-        anchor,
-    } = parse_macro_input!(input as MacroArgs);
+    let MacroArgs { source: parsed, anchor } = parse_macro_input!(input as MacroArgs);
 
     let anchor_enabled = anchor.enabled;
     let anchor_symbol_lit = LitStr::new(&anchor.symbol, Span::call_site());
@@ -2122,7 +1806,6 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
                 let __mdv_anchor_options = #anchor_options_tokens;
                 let __html = __mdv_render_markdown_to_html(
                     __md_source,
-                    #strip_front_matter,
                     __mdv_anchor_options,
                 );
                 ::leptos::view! { <div inner_html={__html}></div> }
@@ -2148,7 +1831,6 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
                     let __mdv_anchor_options = #anchor_options_tokens;
                     let __html = __mdv_render_markdown_to_html(
                         __markdown,
-                        #strip_front_matter,
                         __mdv_anchor_options,
                     );
                     ::leptos::view! { <div inner_html={__html}></div> }
@@ -2231,7 +1913,6 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
             Segment::Markdown(md) => {
                 let html_output = convert_markdown_to_html_with_slugger(
                     &md,
-                    strip_front_matter,
                     &mut slugger,
                     &anchor,
                 );
@@ -2272,11 +1953,7 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
 /// document order.
 #[proc_macro]
 pub fn markdown_anchors(input: TokenStream) -> TokenStream {
-    let MacroArgs {
-        strip_front_matter,
-        source: parsed,
-        ..
-    } = parse_macro_input!(input as MacroArgs);
+    let MacroArgs { source: parsed, .. } = parse_macro_input!(input as MacroArgs);
 
     let runtime_helpers = runtime_helpers_tokens();
 
@@ -2290,7 +1967,7 @@ pub fn markdown_anchors(input: TokenStream) -> TokenStream {
             let expanded = quote! {{
                 #runtime_helpers
                 let __md_source = #expr;
-                __mdv_extract_anchors(__md_source, #strip_front_matter)
+                __mdv_extract_anchors(__md_source)
             }};
             return expanded.into();
         }
@@ -2310,7 +1987,7 @@ pub fn markdown_anchors(input: TokenStream) -> TokenStream {
                             __path_val, err
                         )
                     });
-                    __mdv_extract_anchors(__markdown, #strip_front_matter)
+                    __mdv_extract_anchors(__markdown)
                 }
             }};
             return expanded.into();
@@ -2385,7 +2062,6 @@ pub fn markdown_anchors(input: TokenStream) -> TokenStream {
         if let Segment::Markdown(md) = seg {
             anchors.extend(collect_markdown_anchors_with_slugger(
                 &md,
-                strip_front_matter,
                 &mut slugger,
             ));
         }
@@ -2429,7 +2105,7 @@ mod tests {
 
     #[test]
     fn convert_markdown_to_html_basic() {
-        let html = convert_markdown_to_html("# Title\n\nSome **bold** text.", false);
+        let html = convert_markdown_to_html("# Title\n\nSome **bold** text.");
         assert!(html.contains("<h1 id=\"title\"><a class=\"header-anchor\" href=\"#title\""));
         assert!(html.contains(">#</a>Title</h1>"));
         assert!(html.contains("<strong>bold</strong>"));
@@ -2438,32 +2114,43 @@ mod tests {
 
     #[test]
     fn convert_markdown_to_html_accepts_string() {
-        let html = convert_markdown_to_html(String::from("just **bold** text"), false);
+        let html = convert_markdown_to_html(String::from("just **bold** text"));
         assert!(html.contains("<strong>bold</strong>"));
     }
 
     #[test]
     fn convert_markdown_to_html_empty() {
-        let html = convert_markdown_to_html("", false);
+        let html = convert_markdown_to_html("");
         assert_eq!(html, "");
-        let html_ws = convert_markdown_to_html("   \n\t\n", false);
+        let html_ws = convert_markdown_to_html("   \n\t\n");
         assert_eq!(html_ws, "");
     }
 
     #[test]
-    fn convert_markdown_strips_front_matter() {
-        let html =
-            convert_markdown_to_html("---\ntitle: Example\n---\n\nContent with **bold**", true);
-        assert!(html.contains("Content with"));
-        assert!(!html.contains("title: Example"));
+    fn convert_markdown_skips_metadata_blocks() {
+        let yaml_html = convert_markdown_to_html("---\ntitle: Example\n---\n\n# Title");
+        assert!(yaml_html.contains("<h1 id=\"title\">"));
+        assert!(!yaml_html.contains("title: Example"));
+
+        let plus_html = convert_markdown_to_html("+++\nfoo = \"bar\"\n+++\n\n# Title");
+        assert!(plus_html.contains("<h1 id=\"title\">"));
+        assert!(!plus_html.contains("foo = \"bar\""));
     }
 
     #[test]
     fn convert_markdown_custom_heading_anchor() {
-        let html = convert_markdown_to_html("# Using custom anchors {#my-anchor}", false);
+        let html = convert_markdown_to_html("# Using custom anchors {#my-anchor}");
         assert!(html.contains("<h1 id=\"my-anchor\"><a class=\"header-anchor\" href=\"#my-anchor\""));
         assert!(html.contains(">#</a>Using custom anchors</h1>"));
         assert!(!html.contains("{#my-anchor}"));
+    }
+
+    #[test]
+    fn convert_markdown_preserves_heading_attributes() {
+        let html = convert_markdown_to_html("# Heading {#custom .fancy data-foo=bar}");
+        assert!(html.contains("id=\"custom\""));
+        assert!(html.contains("class=\"fancy\""));
+        assert!(html.contains("data-foo=\"bar\""));
     }
 
     #[test]
@@ -2475,12 +2162,7 @@ mod tests {
             style: Some("color: #f40;".to_string()),
             symbol: "§".to_string(),
         };
-        let html = convert_markdown_to_html_with_slugger(
-            "# Title",
-            false,
-            &mut slugger,
-            &anchor_options,
-        );
+        let html = convert_markdown_to_html_with_slugger("# Title", &mut slugger, &anchor_options);
         assert!(html.contains("class=\"my-anchor\""));
         assert!(html.contains("style=\"color: #f40;\""));
         assert!(html.contains(">§</a>Title</h1>"));
@@ -2488,7 +2170,7 @@ mod tests {
 
     #[test]
     fn collect_markdown_anchors_basic() {
-        let anchors = collect_markdown_anchors("# Title\n\n## Title", false);
+        let anchors = collect_markdown_anchors("# Title\n\n## Title");
         assert_eq!(
             anchors,
             vec![
@@ -2500,7 +2182,7 @@ mod tests {
 
     #[test]
     fn collect_markdown_anchors_custom_id() {
-        let anchors = collect_markdown_anchors("# Custom {#custom-id}", false);
+        let anchors = collect_markdown_anchors("# Custom {#custom-id}");
         assert_eq!(
             anchors,
             vec![("Custom".to_string(), "custom-id".to_string())]
@@ -2508,9 +2190,18 @@ mod tests {
     }
 
     #[test]
+    fn collect_markdown_anchors_heading_attributes() {
+        let anchors = collect_markdown_anchors("# Title {#custom .fancy data-foo=bar}");
+        assert_eq!(
+            anchors,
+            vec![("Title".to_string(), "custom".to_string())]
+        );
+    }
+
+    #[test]
     fn collect_markdown_anchors_strips_accents() {
         let input = "# \u{00DA}ltimo par\u{00E1}grafo";
-        let anchors = collect_markdown_anchors(input, false);
+        let anchors = collect_markdown_anchors(input);
         assert_eq!(
             anchors,
             vec![(

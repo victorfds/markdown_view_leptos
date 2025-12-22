@@ -252,12 +252,16 @@ pub fn App() -> impl IntoView {
         
      - Rust is great
      - Leptos is great
-{{ <HebrewBlock>"ישב בסתר עליון בצל שדי יתלונן"</HebrewBlock> }}
+    {{ <HebrewBlock>"ישב בסתר עליון בצל שדי יתלונן"</HebrewBlock> }}
      Enjoy using Leptos with Dynamic Markdown!"#;
 
     view! {
-        <main class="markdown-view" style="font-family:system-ui, sans-serif; color:#e2e8f0; background:#0b1020; min-height:100vh; padding:24px;">
-            {markdown_view!(&content)} {markdown_view!(file = "content.md")}
+        <main
+            class="markdown-view"
+            style="font-family:system-ui, sans-serif; color:#e2e8f0; background:#0b1020; min-height:100vh; padding:24px;"
+        >
+            {markdown_view!(&content)}
+            {markdown_view!(file = "content.md")}
         </main>
     }
 }
