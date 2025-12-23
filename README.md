@@ -15,12 +15,6 @@ Compile-time Markdown to Leptos `view!` with MDX‑like inline components.
 cargo add markdown_view_leptos
 ```
 
-For runtime string rendering (dynamic inputs), also add:
-
-```
-cargo add pulldown-cmark
-```
-
 For CSR (WASM):
 - `rustup target add wasm32-unknown-unknown`
 - Use a bundler like Trunk (`cargo install trunk`)
@@ -95,8 +89,6 @@ If the macro can see a string literal binding in the same file (as with `body` a
 it inlines it so `{{ ... }}` components still render. Otherwise Markdown is rendered
 at runtime and `{{ ... }}` blocks stay literal text.
 
-When you use runtime strings, add `pulldown-cmark` to your app dependencies.
-
 ## From a URL (build‑time fetch)
 
 ```rust
@@ -117,12 +109,12 @@ pub fn App() -> impl IntoView {
 
 ## How it works
 
-- Markdown → HTML: Compile-time sources use `pulldown‑cmark` with the full option set (definition lists, footnotes, GFM, math, heading attributes, metadata blocks, and more); runtime strings for `markdown_view!` also use `pulldown‑cmark`, so add `pulldown-cmark` to your app dependencies when rendering dynamic strings. Injected via `inner_html` into a `view!` tree.
+- Markdown → HTML: Compile-time sources use `pulldown‑cmark` with the full option set (definition lists, footnotes, GFM, math, heading attributes, metadata blocks, and more). Runtime strings use a lightweight built-in parser (headings + paragraphs + heading IDs). Injected via `inner_html` into a `view!` tree.
 - Inline components: Any `{{ ... }}` outside fenced code blocks is parsed as Rust/RSX and spliced into the `view!` tree for compile-time sources (string literal, `file`, `url`, or identifiers that resolve to literals in the same file). Runtime `String` inputs render `{{ ... }}` literally.
 - Fenced code: Triple‑backtick fences (```) are respected; `{{ ... }}` inside them is ignored and rendered literally.
 - Parse fallback: If a snippet inside `{{ ... }}` doesn’t parse, it is rendered as plain Markdown so your build doesn’t fail unexpectedly.
 - Metadata blocks: Compile-time sources honor YAML/TOML front matter (`---` or `+++`) via pulldown‑cmark’s metadata block options.
-- Anchor extraction: `markdown_anchors!` uses pulldown‑cmark both at compile time and at runtime for dynamic inputs, so heading attributes like `{#id .class}` are supported.
+- Anchor extraction: `markdown_anchors!` uses pulldown‑cmark at compile time; runtime strings use the lightweight parser and honor `{#id}` (other attributes are ignored).
 
 ## Options: heading anchors
 
@@ -190,7 +182,7 @@ let toc = anchors
     .collect::<String>();
 ```
 
-When you pass a dynamic string expression to `markdown_anchors!`, the runtime path uses `pulldown-cmark` so heading attributes (like `{#id .class}`) are honored. Add `pulldown-cmark` to your app dependencies if you use dynamic inputs.
+When you pass a dynamic string expression to `markdown_anchors!`, the runtime path uses the lightweight parser and honors `{#id}` (other heading attributes are ignored).
 
 ## Example
 

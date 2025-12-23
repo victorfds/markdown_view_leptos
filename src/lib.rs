@@ -22,8 +22,9 @@
 //! - Remote `url = "..."` fetch happens at compile time and is disabled under
 //!   rust-analyzer to keep IDEs responsive. Prefer `file = "..."` for stability.
 //! - Dynamic sources (`markdown_view!(my_string)` or `file = format!(...)`) render
-//!   at runtime using `pulldown-cmark`. Add `pulldown-cmark` to your application
-//!   dependencies when using runtime Markdown rendering. If the macro can see a
+//!   at runtime using a lightweight built-in Markdown renderer (no extra user
+//!   dependencies). It supports headings/paragraphs and heading IDs but does not
+//!   expand inline `{{ ... }}` components. If the macro can see a
 //!   string literal binding in the same file (for example `let body = r#"..."#;`
 //!   followed by `markdown_view!(body)`), it treats it like an inline literal so
 //!   inline `{{ ... }}` components still expand.
@@ -714,7 +715,8 @@ enum Source {
     },
     FileExpr(Expr),
     Url(LitStr),
-    /// Any other expression; rendered at runtime (pulldown-cmark) without inline component expansion.
+    /// Any other expression; rendered at runtime with the built-in lightweight
+    /// renderer without inline component expansion.
     Dynamic(Expr),
 }
 
@@ -1560,28 +1562,138 @@ fn runtime_helpers_tokens() -> TokenStream2 {
                 slug
             }
         }
-        fn __mdv_extract_heading_text(
-            events: &[::pulldown_cmark::Event<'_>],
-        ) -> ::std::string::String {
-            let mut text = ::std::string::String::new();
-            for event in events {
-                match event {
-                    ::pulldown_cmark::Event::Text(value)
-                    | ::pulldown_cmark::Event::Code(value) => {
-                        text.push_str(value.as_ref());
+        fn __mdv_parse_heading_attrs(text: &str) -> (::std::string::String, Option<String>) {
+            let trimmed = text.trim_end();
+            if let Some(start) = trimmed.rfind('{') {
+                if trimmed.ends_with('}') {
+                    let attrs = &trimmed[start + 1..trimmed.len() - 1];
+                    let mut custom_id: Option<String> = None;
+                    let mut has_attr = false;
+                    for part in attrs.split_whitespace() {
+                        if let Some(id) = part.strip_prefix('#') {
+                            if !id.is_empty() {
+                                custom_id = Some(id.to_string());
+                                has_attr = true;
+                                break;
+                            }
+                        } else if part.starts_with('.') || part.contains('=') {
+                            has_attr = true;
+                        }
                     }
-                    ::pulldown_cmark::Event::SoftBreak
-                    | ::pulldown_cmark::Event::HardBreak => {
-                        text.push(' ');
+                    if has_attr {
+                        let before = trimmed[..start].trim_end();
+                        return (before.to_string(), custom_id);
                     }
-                    ::pulldown_cmark::Event::InlineMath(value)
-                    | ::pulldown_cmark::Event::DisplayMath(value) => {
-                        text.push_str(value.as_ref());
-                    }
-                    _ => {}
                 }
             }
-            text
+            (trimmed.to_string(), None)
+        }
+        fn __mdv_parse_atx_heading(line: &str) -> Option<(u8, ::std::string::String, Option<String>)> {
+            let trimmed = line.trim_start();
+            let mut level = 0usize;
+            for ch in trimmed.chars() {
+                if ch == '#' {
+                    level += 1;
+                } else {
+                    break;
+                }
+            }
+            if level == 0 || level > 6 {
+                return None;
+            }
+            let rest = trimmed[level..].trim_start();
+            let mut text = rest.trim_end();
+            if text.ends_with('#') {
+                let mut end = text.len();
+                while end > 0 && text.as_bytes()[end - 1] == b'#' {
+                    end -= 1;
+                }
+                text = text[..end].trim_end();
+            }
+            let (clean_text, custom_id) = __mdv_parse_heading_attrs(text);
+            Some((level as u8, clean_text, custom_id))
+        }
+        fn __mdv_setext_level(line: &str) -> Option<u8> {
+            let trimmed = line.trim();
+            if trimmed.is_empty() {
+                return None;
+            }
+            let mut chars = trimmed.chars();
+            let first = chars.next()?;
+            if first != '=' && first != '-' {
+                return None;
+            }
+            if chars.any(|c| c != first) {
+                return None;
+            }
+            Some(if first == '=' { 1 } else { 2 })
+        }
+        enum __MdvBlock {
+            Heading {
+                level: u8,
+                text: ::std::string::String,
+                custom_id: Option<String>,
+            },
+            Paragraph(::std::string::String),
+        }
+        fn __mdv_push_paragraph(
+            blocks: &mut ::std::vec::Vec<__MdvBlock>,
+            lines: &mut ::std::vec::Vec<::std::string::String>,
+        ) {
+            if lines.is_empty() {
+                return;
+            }
+            let joined = lines.join(" ");
+            let text = joined.trim().to_string();
+            if !text.is_empty() {
+                blocks.push(__MdvBlock::Paragraph(text));
+            }
+            lines.clear();
+        }
+        fn __mdv_parse_blocks(markdown: &str) -> ::std::vec::Vec<__MdvBlock> {
+            let mut blocks = ::std::vec::Vec::new();
+            let mut para_lines: ::std::vec::Vec<::std::string::String> = ::std::vec::Vec::new();
+            let mut lines = markdown.lines().peekable();
+
+            while let Some(line) = lines.next() {
+                let line = line.trim_end_matches('\r');
+                if let Some((level, text, custom_id)) = __mdv_parse_atx_heading(line) {
+                    __mdv_push_paragraph(&mut blocks, &mut para_lines);
+                    if !text.trim().is_empty() {
+                        blocks.push(__MdvBlock::Heading {
+                            level,
+                            text,
+                            custom_id,
+                        });
+                    }
+                    continue;
+                }
+                if !line.trim().is_empty() {
+                    if let Some(next) = lines.peek() {
+                        if let Some(level) = __mdv_setext_level(next) {
+                            let (text, custom_id) = __mdv_parse_heading_attrs(line);
+                            __mdv_push_paragraph(&mut blocks, &mut para_lines);
+                            if !text.trim().is_empty() {
+                                blocks.push(__MdvBlock::Heading {
+                                    level,
+                                    text,
+                                    custom_id,
+                                });
+                            }
+                            lines.next();
+                            continue;
+                        }
+                    }
+                }
+                if line.trim().is_empty() {
+                    __mdv_push_paragraph(&mut blocks, &mut para_lines);
+                    continue;
+                }
+                para_lines.push(line.to_string());
+            }
+
+            __mdv_push_paragraph(&mut blocks, &mut para_lines);
+            blocks
         }
         fn __mdv_render_markdown_to_html(
             markdown: impl AsRef<str>,
@@ -1591,75 +1703,50 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             if markdown.trim().is_empty() {
                 return String::new();
             }
-            let parser = ::pulldown_cmark::Parser::new_ext(
-                markdown,
-                ::pulldown_cmark::Options::all(),
-            );
-            let mut events: ::std::vec::Vec<::pulldown_cmark::Event<'_>> = ::std::vec::Vec::new();
-            let mut iter = parser.into_iter();
+            let mut html_output = String::new();
             let mut anchor_slugger = __MdvAnchorSlugger::new();
-
-            while let Some(event) = iter.next() {
-                match event {
-                    ::pulldown_cmark::Event::Start(::pulldown_cmark::Tag::Heading {
+            for block in __mdv_parse_blocks(markdown) {
+                match block {
+                    __MdvBlock::Heading {
                         level,
-                        id,
-                        classes,
-                        attrs,
-                    }) => {
-                        let mut inner_events: ::std::vec::Vec<::pulldown_cmark::Event<'_>> =
-                            ::std::vec::Vec::new();
-                        while let Some(inner) = iter.next() {
-                            if matches!(
-                                inner,
-                                ::pulldown_cmark::Event::End(
-                                    ::pulldown_cmark::TagEnd::Heading(_)
-                                )
-                            ) {
-                                break;
-                            }
-                            inner_events.push(inner);
-                        }
-
-                        let heading_text = __mdv_extract_heading_text(&inner_events);
-                        let anchor_id = if let Some(id) = id {
-                            let id_value = id.to_string();
-                            anchor_slugger.register_custom(&id_value);
-                            Some(id_value)
+                        text,
+                        custom_id,
+                    } => {
+                        let anchor_id = if let Some(id) = custom_id {
+                            anchor_slugger.register_custom(&id);
+                            Some(id)
                         } else {
-                            let slug = anchor_slugger.slugify(&heading_text);
+                            let slug = anchor_slugger.slugify(&text);
                             if slug.is_empty() { None } else { Some(slug) }
                         };
-                        let heading_id = anchor_id
-                            .as_ref()
-                            .map(|id| ::pulldown_cmark::CowStr::from(id.clone()));
-                        let anchor_html = anchor_id
-                            .as_ref()
-                            .and_then(|id| __mdv_render_anchor_html(id, anchor_options));
-                        events.push(::pulldown_cmark::Event::Start(
-                            ::pulldown_cmark::Tag::Heading {
-                                level,
-                                id: heading_id,
-                                classes,
-                                attrs,
-                            },
-                        ));
-                        if let Some(anchor_html) = anchor_html {
-                            events.push(::pulldown_cmark::Event::Html(
-                                ::pulldown_cmark::CowStr::from(anchor_html),
-                            ));
+                        html_output.push_str("<h");
+                        html_output.push_str(&level.to_string());
+                        if let Some(id) = anchor_id.as_ref() {
+                            html_output.push_str(" id=\"");
+                            html_output.push_str(&__mdv_escape_html(id));
+                            html_output.push('"');
                         }
-                        events.extend(inner_events);
-                        events.push(::pulldown_cmark::Event::End(
-                            ::pulldown_cmark::TagEnd::Heading(level),
-                        ));
+                        html_output.push('>');
+                        if let Some(id) = anchor_id.as_ref() {
+                            if let Some(anchor_html) = __mdv_render_anchor_html(id, anchor_options) {
+                                html_output.push_str(&anchor_html);
+                            }
+                        }
+                        html_output.push_str(&__mdv_escape_html(&text));
+                        html_output.push_str("</h");
+                        html_output.push_str(&level.to_string());
+                        html_output.push('>');
                     }
-                    _ => events.push(event),
+                    __MdvBlock::Paragraph(text) => {
+                        if text.trim().is_empty() {
+                            continue;
+                        }
+                        html_output.push_str("<p>");
+                        html_output.push_str(&__mdv_escape_html(&text));
+                        html_output.push_str("</p>");
+                    }
                 }
             }
-
-            let mut html_output = String::new();
-            ::pulldown_cmark::html::push_html(&mut html_output, events.into_iter());
             html_output
         }
         fn __mdv_extract_anchors(
@@ -1669,45 +1756,28 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             if markdown.trim().is_empty() {
                 return ::std::vec::Vec::new();
             }
-
             let mut anchors: ::std::vec::Vec<(::std::string::String, ::std::string::String)> =
                 ::std::vec::Vec::new();
             let mut slugger = __MdvAnchorSlugger::new();
-            let parser = ::pulldown_cmark::Parser::new_ext(
-                markdown,
-                ::pulldown_cmark::Options::all(),
-            );
-            let mut iter = parser.into_iter();
-            while let Some(event) = iter.next() {
-                if let ::pulldown_cmark::Event::Start(::pulldown_cmark::Tag::Heading { id, .. }) =
-                    event
+            for block in __mdv_parse_blocks(markdown) {
+                if let __MdvBlock::Heading {
+                    text,
+                    custom_id,
+                    ..
+                } = block
                 {
-                    let mut inner_events: ::std::vec::Vec<::pulldown_cmark::Event<'_>> =
-                        ::std::vec::Vec::new();
-                    while let Some(inner) = iter.next() {
-                        if matches!(
-                            inner,
-                            ::pulldown_cmark::Event::End(::pulldown_cmark::TagEnd::Heading(_))
-                        ) {
-                            break;
-                        }
-                        inner_events.push(inner);
-                    }
-                    let heading_text = __mdv_extract_heading_text(&inner_events);
-                    let anchor_id = if let Some(id) = id {
-                        let id_value = id.to_string();
-                        slugger.register_custom(&id_value);
-                        Some(id_value)
+                    let anchor_id = if let Some(id) = custom_id {
+                        slugger.register_custom(&id);
+                        Some(id)
                     } else {
-                        let slug = slugger.slugify(&heading_text);
+                        let slug = slugger.slugify(&text);
                         if slug.is_empty() { None } else { Some(slug) }
                     };
                     if let Some(id) = anchor_id {
-                        anchors.push((heading_text.trim().to_string(), id));
+                        anchors.push((text.trim().to_string(), id));
                     }
                 }
             }
-
             anchors
         }
     }
@@ -1729,13 +1799,12 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 ///   literal binding) are also resolved when possible. If the value cannot be resolved
 ///   to a literal at compile time, the macro falls back to treating the expression as a
 ///   dynamic Markdown string, equivalent to calling `markdown_view!(expr)` without `url =`.
-/// - Any other expression: rendered at runtime using `pulldown-cmark` with the full
-///   option set (definition lists, footnotes, GFM, math, heading attributes, metadata
-///   blocks, and more). Inline `{{ ... }}` component syntax is **not** expanded in this
-///   mode; it is rendered as literal text. To use `{{ <MyComponent/> }}` you must pass
-///   a source that can be resolved to a string literal or file path at compile time so
-///   the macro can split the Markdown and inject real Leptos components. Add
-///   `pulldown-cmark` to your app dependencies when using runtime strings.
+/// - Any other expression: rendered at runtime using a lightweight built-in parser
+///   that supports headings/paragraphs and heading IDs. Inline `{{ ... }}` component
+///   syntax is **not** expanded in this mode; it is rendered as literal text. To use
+///   `{{ <MyComponent/> }}` you must pass a source that can be resolved to a string
+///   literal or file path at compile time so the macro can split the Markdown and
+///   inject real Leptos components.
 ///
 /// Inline Leptos components:
 /// - Use `{{ ... }}` inside the Markdown: `{{ <MyComponent prop=value/> }}`.
