@@ -114,101 +114,111 @@ fn is_combining_mark(ch: char) -> bool {
 fn fold_diacritic(ch: char) -> Option<&'static str> {
     match ch {
         '\u{C0}' | '\u{C1}' | '\u{C2}' | '\u{C3}' | '\u{C4}' | '\u{C5}' | '\u{E0}' | '\u{E1}'
-        | '\u{E2}' | '\u{E3}' | '\u{E4}' | '\u{E5}' | '\u{100}' | '\u{101}' | '\u{102}' | '\u{103}'
-        | '\u{104}' | '\u{105}' | '\u{1CD}' | '\u{1CE}' | '\u{1DE}' | '\u{1DF}' | '\u{1E0}' | '\u{1E1}'
-        | '\u{1FA}' | '\u{1FB}' | '\u{200}' | '\u{201}' | '\u{202}' | '\u{203}' | '\u{226}' | '\u{227}'
-        | '\u{1E00}' | '\u{1E01}' | '\u{1EA0}' | '\u{1EA1}' | '\u{1EA2}' | '\u{1EA3}' | '\u{1EA4}'
-        | '\u{1EA5}' | '\u{1EA6}' | '\u{1EA7}' | '\u{1EA8}' | '\u{1EA9}' | '\u{1EAA}' | '\u{1EAB}'
-        | '\u{1EAC}' | '\u{1EAD}' | '\u{1EAE}' | '\u{1EAF}' | '\u{1EB0}' | '\u{1EB1}' | '\u{1EB2}'
-        | '\u{1EB3}' | '\u{1EB4}' | '\u{1EB5}' | '\u{1EB6}' | '\u{1EB7}' | '\u{2090}' | '\u{FF21}'
+        | '\u{E2}' | '\u{E3}' | '\u{E4}' | '\u{E5}' | '\u{100}' | '\u{101}' | '\u{102}'
+        | '\u{103}' | '\u{104}' | '\u{105}' | '\u{1CD}' | '\u{1CE}' | '\u{1DE}' | '\u{1DF}'
+        | '\u{1E0}' | '\u{1E1}' | '\u{1FA}' | '\u{1FB}' | '\u{200}' | '\u{201}' | '\u{202}'
+        | '\u{203}' | '\u{226}' | '\u{227}' | '\u{1E00}' | '\u{1E01}' | '\u{1EA0}' | '\u{1EA1}'
+        | '\u{1EA2}' | '\u{1EA3}' | '\u{1EA4}' | '\u{1EA5}' | '\u{1EA6}' | '\u{1EA7}'
+        | '\u{1EA8}' | '\u{1EA9}' | '\u{1EAA}' | '\u{1EAB}' | '\u{1EAC}' | '\u{1EAD}'
+        | '\u{1EAE}' | '\u{1EAF}' | '\u{1EB0}' | '\u{1EB1}' | '\u{1EB2}' | '\u{1EB3}'
+        | '\u{1EB4}' | '\u{1EB5}' | '\u{1EB6}' | '\u{1EB7}' | '\u{2090}' | '\u{FF21}'
         | '\u{FF41}' => Some("a"),
-        '\u{1E02}' | '\u{1E03}' | '\u{1E04}' | '\u{1E05}' | '\u{1E06}' | '\u{1E07}' | '\u{FF22}'
-        | '\u{FF42}' => Some("b"),
-        '\u{C7}' | '\u{E7}' | '\u{106}' | '\u{107}' | '\u{108}' | '\u{109}' | '\u{10A}' | '\u{10B}'
-        | '\u{10C}' | '\u{10D}' | '\u{1E08}' | '\u{1E09}' | '\u{FF23}' | '\u{FF43}' => Some("c"),
-        '\u{D0}' | '\u{F0}' | '\u{10E}' | '\u{10F}' | '\u{110}' | '\u{111}' | '\u{1E0A}' | '\u{1E0B}'
-        | '\u{1E0C}' | '\u{1E0D}' | '\u{1E0E}' | '\u{1E0F}' | '\u{1E10}' | '\u{1E11}' | '\u{1E12}'
-        | '\u{1E13}' | '\u{FF24}' | '\u{FF44}' => Some("d"),
-        '\u{C8}' | '\u{C9}' | '\u{CA}' | '\u{CB}' | '\u{E8}' | '\u{E9}' | '\u{EA}' | '\u{EB}' | '\u{112}'
-        | '\u{113}' | '\u{114}' | '\u{115}' | '\u{116}' | '\u{117}' | '\u{118}' | '\u{119}' | '\u{11A}'
-        | '\u{11B}' | '\u{204}' | '\u{205}' | '\u{206}' | '\u{207}' | '\u{228}' | '\u{229}' | '\u{1E14}'
-        | '\u{1E15}' | '\u{1E16}' | '\u{1E17}' | '\u{1E18}' | '\u{1E19}' | '\u{1E1A}' | '\u{1E1B}'
-        | '\u{1E1C}' | '\u{1E1D}' | '\u{1EB8}' | '\u{1EB9}' | '\u{1EBA}' | '\u{1EBB}' | '\u{1EBC}'
-        | '\u{1EBD}' | '\u{1EBE}' | '\u{1EBF}' | '\u{1EC0}' | '\u{1EC1}' | '\u{1EC2}' | '\u{1EC3}'
-        | '\u{1EC4}' | '\u{1EC5}' | '\u{1EC6}' | '\u{1EC7}' | '\u{2091}' | '\u{FF25}' | '\u{FF45}'
-        => Some("e"),
+        '\u{1E02}' | '\u{1E03}' | '\u{1E04}' | '\u{1E05}' | '\u{1E06}' | '\u{1E07}'
+        | '\u{FF22}' | '\u{FF42}' => Some("b"),
+        '\u{C7}' | '\u{E7}' | '\u{106}' | '\u{107}' | '\u{108}' | '\u{109}' | '\u{10A}'
+        | '\u{10B}' | '\u{10C}' | '\u{10D}' | '\u{1E08}' | '\u{1E09}' | '\u{FF23}' | '\u{FF43}' => {
+            Some("c")
+        }
+        '\u{D0}' | '\u{F0}' | '\u{10E}' | '\u{10F}' | '\u{110}' | '\u{111}' | '\u{1E0A}'
+        | '\u{1E0B}' | '\u{1E0C}' | '\u{1E0D}' | '\u{1E0E}' | '\u{1E0F}' | '\u{1E10}'
+        | '\u{1E11}' | '\u{1E12}' | '\u{1E13}' | '\u{FF24}' | '\u{FF44}' => Some("d"),
+        '\u{C8}' | '\u{C9}' | '\u{CA}' | '\u{CB}' | '\u{E8}' | '\u{E9}' | '\u{EA}' | '\u{EB}'
+        | '\u{112}' | '\u{113}' | '\u{114}' | '\u{115}' | '\u{116}' | '\u{117}' | '\u{118}'
+        | '\u{119}' | '\u{11A}' | '\u{11B}' | '\u{204}' | '\u{205}' | '\u{206}' | '\u{207}'
+        | '\u{228}' | '\u{229}' | '\u{1E14}' | '\u{1E15}' | '\u{1E16}' | '\u{1E17}'
+        | '\u{1E18}' | '\u{1E19}' | '\u{1E1A}' | '\u{1E1B}' | '\u{1E1C}' | '\u{1E1D}'
+        | '\u{1EB8}' | '\u{1EB9}' | '\u{1EBA}' | '\u{1EBB}' | '\u{1EBC}' | '\u{1EBD}'
+        | '\u{1EBE}' | '\u{1EBF}' | '\u{1EC0}' | '\u{1EC1}' | '\u{1EC2}' | '\u{1EC3}'
+        | '\u{1EC4}' | '\u{1EC5}' | '\u{1EC6}' | '\u{1EC7}' | '\u{2091}' | '\u{FF25}'
+        | '\u{FF45}' => Some("e"),
         '\u{1E1E}' | '\u{1E1F}' | '\u{FF26}' | '\u{FF46}' => Some("f"),
-        '\u{11C}' | '\u{11D}' | '\u{11E}' | '\u{11F}' | '\u{120}' | '\u{121}' | '\u{122}' | '\u{123}'
-        | '\u{1E6}' | '\u{1E7}' | '\u{1F4}' | '\u{1F5}' | '\u{1E20}' | '\u{1E21}' | '\u{FF27}'
-        | '\u{FF47}' => Some("g"),
-        '\u{124}' | '\u{125}' | '\u{126}' | '\u{127}' | '\u{21E}' | '\u{21F}' | '\u{1E22}' | '\u{1E23}'
-        | '\u{1E24}' | '\u{1E25}' | '\u{1E26}' | '\u{1E27}' | '\u{1E28}' | '\u{1E29}' | '\u{1E2A}'
-        | '\u{1E2B}' | '\u{1E96}' | '\u{2095}' | '\u{FF28}' | '\u{FF48}' => Some("h"),
-        '\u{CC}' | '\u{CD}' | '\u{CE}' | '\u{CF}' | '\u{EC}' | '\u{ED}' | '\u{EE}' | '\u{EF}' | '\u{128}'
-        | '\u{129}' | '\u{12A}' | '\u{12B}' | '\u{12C}' | '\u{12D}' | '\u{12E}' | '\u{12F}' | '\u{130}'
-        | '\u{131}' | '\u{1CF}' | '\u{1D0}' | '\u{208}' | '\u{209}' | '\u{20A}' | '\u{20B}' | '\u{1D62}'
-        | '\u{1E2C}' | '\u{1E2D}' | '\u{1E2E}' | '\u{1E2F}' | '\u{1EC8}' | '\u{1EC9}' | '\u{1ECA}'
-        | '\u{1ECB}' | '\u{2071}' | '\u{FF29}' | '\u{FF49}' => Some("i"),
+        '\u{11C}' | '\u{11D}' | '\u{11E}' | '\u{11F}' | '\u{120}' | '\u{121}' | '\u{122}'
+        | '\u{123}' | '\u{1E6}' | '\u{1E7}' | '\u{1F4}' | '\u{1F5}' | '\u{1E20}' | '\u{1E21}'
+        | '\u{FF27}' | '\u{FF47}' => Some("g"),
+        '\u{124}' | '\u{125}' | '\u{126}' | '\u{127}' | '\u{21E}' | '\u{21F}' | '\u{1E22}'
+        | '\u{1E23}' | '\u{1E24}' | '\u{1E25}' | '\u{1E26}' | '\u{1E27}' | '\u{1E28}'
+        | '\u{1E29}' | '\u{1E2A}' | '\u{1E2B}' | '\u{1E96}' | '\u{2095}' | '\u{FF28}'
+        | '\u{FF48}' => Some("h"),
+        '\u{CC}' | '\u{CD}' | '\u{CE}' | '\u{CF}' | '\u{EC}' | '\u{ED}' | '\u{EE}' | '\u{EF}'
+        | '\u{128}' | '\u{129}' | '\u{12A}' | '\u{12B}' | '\u{12C}' | '\u{12D}' | '\u{12E}'
+        | '\u{12F}' | '\u{130}' | '\u{131}' | '\u{1CF}' | '\u{1D0}' | '\u{208}' | '\u{209}'
+        | '\u{20A}' | '\u{20B}' | '\u{1D62}' | '\u{1E2C}' | '\u{1E2D}' | '\u{1E2E}'
+        | '\u{1E2F}' | '\u{1EC8}' | '\u{1EC9}' | '\u{1ECA}' | '\u{1ECB}' | '\u{2071}'
+        | '\u{FF29}' | '\u{FF49}' => Some("i"),
         '\u{134}' | '\u{135}' | '\u{1F0}' | '\u{2C7C}' | '\u{FF2A}' | '\u{FF4A}' => Some("j"),
         '\u{136}' | '\u{137}' | '\u{138}' | '\u{1E8}' | '\u{1E9}' | '\u{1E30}' | '\u{1E31}'
-        | '\u{1E32}' | '\u{1E33}' | '\u{1E34}' | '\u{1E35}' | '\u{2096}' | '\u{FF2B}' | '\u{FF4B}'
-        => Some("k"),
-        '\u{139}' | '\u{13A}' | '\u{13B}' | '\u{13C}' | '\u{13D}' | '\u{13E}' | '\u{13F}' | '\u{140}'
-        | '\u{141}' | '\u{142}'
-        | '\u{1E36}' | '\u{1E37}' | '\u{1E38}' | '\u{1E39}' | '\u{1E3A}' | '\u{1E3B}' | '\u{1E3C}'
-        | '\u{1E3D}' | '\u{2097}' | '\u{FF2C}' | '\u{FF4C}' => Some("l"),
-        '\u{1E3E}' | '\u{1E3F}' | '\u{1E40}' | '\u{1E41}' | '\u{1E42}' | '\u{1E43}' | '\u{2098}'
-        | '\u{FF2D}' | '\u{FF4D}' => Some("m"),
-        '\u{D1}' | '\u{F1}' | '\u{143}' | '\u{144}' | '\u{145}' | '\u{146}' | '\u{147}' | '\u{148}'
-        | '\u{149}' | '\u{14A}' | '\u{14B}' | '\u{1F8}' | '\u{1F9}' | '\u{1E44}' | '\u{1E45}'
-        | '\u{1E46}'
-        | '\u{1E47}' | '\u{1E48}' | '\u{1E49}' | '\u{1E4A}' | '\u{1E4B}' | '\u{207F}' | '\u{2099}'
-        | '\u{FF2E}' | '\u{FF4E}' => Some("n"),
+        | '\u{1E32}' | '\u{1E33}' | '\u{1E34}' | '\u{1E35}' | '\u{2096}' | '\u{FF2B}'
+        | '\u{FF4B}' => Some("k"),
+        '\u{139}' | '\u{13A}' | '\u{13B}' | '\u{13C}' | '\u{13D}' | '\u{13E}' | '\u{13F}'
+        | '\u{140}' | '\u{141}' | '\u{142}' | '\u{1E36}' | '\u{1E37}' | '\u{1E38}' | '\u{1E39}'
+        | '\u{1E3A}' | '\u{1E3B}' | '\u{1E3C}' | '\u{1E3D}' | '\u{2097}' | '\u{FF2C}'
+        | '\u{FF4C}' => Some("l"),
+        '\u{1E3E}' | '\u{1E3F}' | '\u{1E40}' | '\u{1E41}' | '\u{1E42}' | '\u{1E43}'
+        | '\u{2098}' | '\u{FF2D}' | '\u{FF4D}' => Some("m"),
+        '\u{D1}' | '\u{F1}' | '\u{143}' | '\u{144}' | '\u{145}' | '\u{146}' | '\u{147}'
+        | '\u{148}' | '\u{149}' | '\u{14A}' | '\u{14B}' | '\u{1F8}' | '\u{1F9}' | '\u{1E44}'
+        | '\u{1E45}' | '\u{1E46}' | '\u{1E47}' | '\u{1E48}' | '\u{1E49}' | '\u{1E4A}'
+        | '\u{1E4B}' | '\u{207F}' | '\u{2099}' | '\u{FF2E}' | '\u{FF4E}' => Some("n"),
         '\u{D2}' | '\u{D3}' | '\u{D4}' | '\u{D5}' | '\u{D6}' | '\u{D8}' | '\u{F2}' | '\u{F3}'
-        | '\u{F4}' | '\u{F5}' | '\u{F6}' | '\u{F8}' | '\u{14C}' | '\u{14D}' | '\u{14E}' | '\u{14F}'
-        | '\u{150}' | '\u{151}' | '\u{1A0}' | '\u{1A1}' | '\u{1D1}' | '\u{1D2}' | '\u{1EA}' | '\u{1EB}'
-        | '\u{1EC}' | '\u{1ED}' | '\u{1FE}' | '\u{1FF}' | '\u{20C}' | '\u{20D}' | '\u{20E}' | '\u{20F}'
-        | '\u{22A}' | '\u{22B}' | '\u{22C}' | '\u{22D}' | '\u{22E}' | '\u{22F}' | '\u{230}' | '\u{231}'
-        | '\u{1E4C}' | '\u{1E4D}' | '\u{1E4E}' | '\u{1E4F}' | '\u{1E50}' | '\u{1E51}' | '\u{1E52}'
-        | '\u{1E53}' | '\u{1ECC}' | '\u{1ECD}' | '\u{1ECE}' | '\u{1ECF}' | '\u{1ED0}' | '\u{1ED1}'
-        | '\u{1ED2}' | '\u{1ED3}' | '\u{1ED4}' | '\u{1ED5}' | '\u{1ED6}' | '\u{1ED7}' | '\u{1ED8}'
-        | '\u{1ED9}' | '\u{1EDA}' | '\u{1EDB}' | '\u{1EDC}' | '\u{1EDD}' | '\u{1EDE}' | '\u{1EDF}'
-        | '\u{1EE0}' | '\u{1EE1}' | '\u{1EE2}' | '\u{1EE3}' | '\u{2092}' | '\u{FF2F}' | '\u{FF4F}'
-        => Some("o"),
-        '\u{1E54}' | '\u{1E55}' | '\u{1E56}' | '\u{1E57}' | '\u{209A}' | '\u{FF30}' | '\u{FF50}'
-        => Some("p"),
+        | '\u{F4}' | '\u{F5}' | '\u{F6}' | '\u{F8}' | '\u{14C}' | '\u{14D}' | '\u{14E}'
+        | '\u{14F}' | '\u{150}' | '\u{151}' | '\u{1A0}' | '\u{1A1}' | '\u{1D1}' | '\u{1D2}'
+        | '\u{1EA}' | '\u{1EB}' | '\u{1EC}' | '\u{1ED}' | '\u{1FE}' | '\u{1FF}' | '\u{20C}'
+        | '\u{20D}' | '\u{20E}' | '\u{20F}' | '\u{22A}' | '\u{22B}' | '\u{22C}' | '\u{22D}'
+        | '\u{22E}' | '\u{22F}' | '\u{230}' | '\u{231}' | '\u{1E4C}' | '\u{1E4D}' | '\u{1E4E}'
+        | '\u{1E4F}' | '\u{1E50}' | '\u{1E51}' | '\u{1E52}' | '\u{1E53}' | '\u{1ECC}'
+        | '\u{1ECD}' | '\u{1ECE}' | '\u{1ECF}' | '\u{1ED0}' | '\u{1ED1}' | '\u{1ED2}'
+        | '\u{1ED3}' | '\u{1ED4}' | '\u{1ED5}' | '\u{1ED6}' | '\u{1ED7}' | '\u{1ED8}'
+        | '\u{1ED9}' | '\u{1EDA}' | '\u{1EDB}' | '\u{1EDC}' | '\u{1EDD}' | '\u{1EDE}'
+        | '\u{1EDF}' | '\u{1EE0}' | '\u{1EE1}' | '\u{1EE2}' | '\u{1EE3}' | '\u{2092}'
+        | '\u{FF2F}' | '\u{FF4F}' => Some("o"),
+        '\u{1E54}' | '\u{1E55}' | '\u{1E56}' | '\u{1E57}' | '\u{209A}' | '\u{FF30}'
+        | '\u{FF50}' => Some("p"),
         '\u{FF31}' | '\u{FF51}' => Some("q"),
-        '\u{154}' | '\u{155}' | '\u{156}' | '\u{157}' | '\u{158}' | '\u{159}' | '\u{210}' | '\u{211}'
-        | '\u{212}' | '\u{213}' | '\u{1D63}' | '\u{1E58}' | '\u{1E59}' | '\u{1E5A}' | '\u{1E5B}'
-        | '\u{1E5C}' | '\u{1E5D}' | '\u{1E5E}' | '\u{1E5F}' | '\u{FF32}' | '\u{FF52}' => Some("r"),
-        '\u{15A}' | '\u{15B}' | '\u{15C}' | '\u{15D}' | '\u{15E}' | '\u{15F}' | '\u{160}' | '\u{161}'
-        | '\u{17F}' | '\u{218}' | '\u{219}' | '\u{1E60}' | '\u{1E61}' | '\u{1E62}' | '\u{1E63}'
-        | '\u{1E64}' | '\u{1E65}' | '\u{1E66}' | '\u{1E67}' | '\u{1E68}' | '\u{1E69}' | '\u{1E9B}'
-        | '\u{209B}' | '\u{FF33}' | '\u{FF53}' => Some("s"),
-        '\u{162}' | '\u{163}' | '\u{164}' | '\u{165}' | '\u{21A}' | '\u{21B}' | '\u{1E6A}' | '\u{1E6B}'
-        | '\u{1E6C}' | '\u{1E6D}' | '\u{1E6E}' | '\u{1E6F}' | '\u{1E70}' | '\u{1E71}' | '\u{1E97}'
-        | '\u{209C}' | '\u{FF34}' | '\u{FF54}' => Some("t"),
-        '\u{D9}' | '\u{DA}' | '\u{DB}' | '\u{DC}' | '\u{F9}' | '\u{FA}' | '\u{FB}' | '\u{FC}' | '\u{168}'
-        | '\u{169}' | '\u{16A}' | '\u{16B}' | '\u{16C}' | '\u{16D}' | '\u{16E}' | '\u{16F}' | '\u{170}'
-        | '\u{171}' | '\u{172}' | '\u{173}' | '\u{1AF}' | '\u{1B0}' | '\u{1D3}' | '\u{1D4}' | '\u{1D5}'
-        | '\u{1D6}' | '\u{1D7}' | '\u{1D8}' | '\u{1D9}' | '\u{1DA}' | '\u{1DB}' | '\u{1DC}' | '\u{214}'
-        | '\u{215}' | '\u{216}' | '\u{217}' | '\u{1D64}' | '\u{1E72}' | '\u{1E73}' | '\u{1E74}'
-        | '\u{1E75}' | '\u{1E76}' | '\u{1E77}' | '\u{1E78}' | '\u{1E79}' | '\u{1E7A}' | '\u{1E7B}'
-        | '\u{1EE4}' | '\u{1EE5}' | '\u{1EE6}' | '\u{1EE7}' | '\u{1EE8}' | '\u{1EE9}' | '\u{1EEA}'
-        | '\u{1EEB}' | '\u{1EEC}' | '\u{1EED}' | '\u{1EEE}' | '\u{1EEF}' | '\u{1EF0}' | '\u{1EF1}'
-        | '\u{FF35}' | '\u{FF55}' => Some("u"),
-        '\u{1D65}' | '\u{1E7C}' | '\u{1E7D}' | '\u{1E7E}' | '\u{1E7F}' | '\u{FF36}' | '\u{FF56}'
-        => Some("v"),
+        '\u{154}' | '\u{155}' | '\u{156}' | '\u{157}' | '\u{158}' | '\u{159}' | '\u{210}'
+        | '\u{211}' | '\u{212}' | '\u{213}' | '\u{1D63}' | '\u{1E58}' | '\u{1E59}' | '\u{1E5A}'
+        | '\u{1E5B}' | '\u{1E5C}' | '\u{1E5D}' | '\u{1E5E}' | '\u{1E5F}' | '\u{FF32}'
+        | '\u{FF52}' => Some("r"),
+        '\u{15A}' | '\u{15B}' | '\u{15C}' | '\u{15D}' | '\u{15E}' | '\u{15F}' | '\u{160}'
+        | '\u{161}' | '\u{17F}' | '\u{218}' | '\u{219}' | '\u{1E60}' | '\u{1E61}' | '\u{1E62}'
+        | '\u{1E63}' | '\u{1E64}' | '\u{1E65}' | '\u{1E66}' | '\u{1E67}' | '\u{1E68}'
+        | '\u{1E69}' | '\u{1E9B}' | '\u{209B}' | '\u{FF33}' | '\u{FF53}' => Some("s"),
+        '\u{162}' | '\u{163}' | '\u{164}' | '\u{165}' | '\u{21A}' | '\u{21B}' | '\u{1E6A}'
+        | '\u{1E6B}' | '\u{1E6C}' | '\u{1E6D}' | '\u{1E6E}' | '\u{1E6F}' | '\u{1E70}'
+        | '\u{1E71}' | '\u{1E97}' | '\u{209C}' | '\u{FF34}' | '\u{FF54}' => Some("t"),
+        '\u{D9}' | '\u{DA}' | '\u{DB}' | '\u{DC}' | '\u{F9}' | '\u{FA}' | '\u{FB}' | '\u{FC}'
+        | '\u{168}' | '\u{169}' | '\u{16A}' | '\u{16B}' | '\u{16C}' | '\u{16D}' | '\u{16E}'
+        | '\u{16F}' | '\u{170}' | '\u{171}' | '\u{172}' | '\u{173}' | '\u{1AF}' | '\u{1B0}'
+        | '\u{1D3}' | '\u{1D4}' | '\u{1D5}' | '\u{1D6}' | '\u{1D7}' | '\u{1D8}' | '\u{1D9}'
+        | '\u{1DA}' | '\u{1DB}' | '\u{1DC}' | '\u{214}' | '\u{215}' | '\u{216}' | '\u{217}'
+        | '\u{1D64}' | '\u{1E72}' | '\u{1E73}' | '\u{1E74}' | '\u{1E75}' | '\u{1E76}'
+        | '\u{1E77}' | '\u{1E78}' | '\u{1E79}' | '\u{1E7A}' | '\u{1E7B}' | '\u{1EE4}'
+        | '\u{1EE5}' | '\u{1EE6}' | '\u{1EE7}' | '\u{1EE8}' | '\u{1EE9}' | '\u{1EEA}'
+        | '\u{1EEB}' | '\u{1EEC}' | '\u{1EED}' | '\u{1EEE}' | '\u{1EEF}' | '\u{1EF0}'
+        | '\u{1EF1}' | '\u{FF35}' | '\u{FF55}' => Some("u"),
+        '\u{1D65}' | '\u{1E7C}' | '\u{1E7D}' | '\u{1E7E}' | '\u{1E7F}' | '\u{FF36}'
+        | '\u{FF56}' => Some("v"),
         '\u{174}' | '\u{175}' | '\u{1E80}' | '\u{1E81}' | '\u{1E82}' | '\u{1E83}' | '\u{1E84}'
-        | '\u{1E85}' | '\u{1E86}' | '\u{1E87}' | '\u{1E88}' | '\u{1E89}' | '\u{1E98}' | '\u{FF37}'
-        | '\u{FF57}' => Some("w"),
-        '\u{1E8A}' | '\u{1E8B}' | '\u{1E8C}' | '\u{1E8D}' | '\u{2093}' | '\u{FF38}' | '\u{FF58}'
-        => Some("x"),
-        '\u{DD}' | '\u{FD}' | '\u{FF}' | '\u{176}' | '\u{177}' | '\u{178}' | '\u{232}' | '\u{233}'
-        | '\u{1E8E}' | '\u{1E8F}' | '\u{1E99}' | '\u{1EF2}' | '\u{1EF3}' | '\u{1EF4}' | '\u{1EF5}'
-        | '\u{1EF6}' | '\u{1EF7}' | '\u{1EF8}' | '\u{1EF9}' | '\u{FF39}' | '\u{FF59}' => Some("y"),
-        '\u{179}' | '\u{17A}' | '\u{17B}' | '\u{17C}' | '\u{17D}' | '\u{17E}' | '\u{1E90}' | '\u{1E91}'
-        | '\u{1E92}' | '\u{1E93}' | '\u{1E94}' | '\u{1E95}' | '\u{FF3A}' | '\u{FF5A}' => Some("z"),
+        | '\u{1E85}' | '\u{1E86}' | '\u{1E87}' | '\u{1E88}' | '\u{1E89}' | '\u{1E98}'
+        | '\u{FF37}' | '\u{FF57}' => Some("w"),
+        '\u{1E8A}' | '\u{1E8B}' | '\u{1E8C}' | '\u{1E8D}' | '\u{2093}' | '\u{FF38}'
+        | '\u{FF58}' => Some("x"),
+        '\u{DD}' | '\u{FD}' | '\u{FF}' | '\u{176}' | '\u{177}' | '\u{178}' | '\u{232}'
+        | '\u{233}' | '\u{1E8E}' | '\u{1E8F}' | '\u{1E99}' | '\u{1EF2}' | '\u{1EF3}'
+        | '\u{1EF4}' | '\u{1EF5}' | '\u{1EF6}' | '\u{1EF7}' | '\u{1EF8}' | '\u{1EF9}'
+        | '\u{FF39}' | '\u{FF59}' => Some("y"),
+        '\u{179}' | '\u{17A}' | '\u{17B}' | '\u{17C}' | '\u{17D}' | '\u{17E}' | '\u{1E90}'
+        | '\u{1E91}' | '\u{1E92}' | '\u{1E93}' | '\u{1E94}' | '\u{1E95}' | '\u{FF3A}'
+        | '\u{FF5A}' => Some("z"),
         '\u{C6}' | '\u{E6}' | '\u{1E2}' | '\u{1E3}' | '\u{1FC}' | '\u{1FD}' => Some("ae"),
         '\u{1C4}' | '\u{1C5}' | '\u{1C6}' | '\u{1F1}' | '\u{1F2}' | '\u{1F3}' => Some("dz"),
         '\u{FB00}' => Some("ff"),
@@ -374,7 +384,11 @@ fn collect_markdown_anchors_with_slugger(
                 Some(id_value)
             } else {
                 let slug = slugger.slugify(&heading_text);
-                if slug.is_empty() { None } else { Some(slug) }
+                if slug.is_empty() {
+                    None
+                } else {
+                    Some(slug)
+                }
             };
             if let Some(id) = anchor_id {
                 anchors.push((heading_text.trim().to_string(), id));
@@ -1277,7 +1291,7 @@ impl Parse for MacroArgs {
             }
             if !(input.peek(Ident) && input.peek2(Token![=])) {
                 return Err(
-                    input.error("markdown_view!: expected `key = value` option after source"),
+                    input.error("markdown_view!: expected `key = value` option after source")
                 );
             }
             let ident: Ident = input.parse()?;
@@ -1653,10 +1667,30 @@ fn runtime_helpers_tokens() -> TokenStream2 {
         fn __mdv_parse_blocks(markdown: &str) -> ::std::vec::Vec<__MdvBlock> {
             let mut blocks = ::std::vec::Vec::new();
             let mut para_lines: ::std::vec::Vec<::std::string::String> = ::std::vec::Vec::new();
-            let mut lines = markdown.lines().peekable();
+            let lines: ::std::vec::Vec<&str> = markdown
+                .lines()
+                .map(|line| line.trim_end_matches('\r'))
+                .collect();
+            let mut idx: usize = 0;
 
-            while let Some(line) = lines.next() {
-                let line = line.trim_end_matches('\r');
+            if let Some(first) = lines.first() {
+                let first_trimmed = first.trim();
+                if first_trimmed == "---" || first_trimmed == "+++" {
+                    let mut end_idx = None;
+                    for i in 1..lines.len() {
+                        if lines[i].trim() == first_trimmed {
+                            end_idx = Some(i);
+                            break;
+                        }
+                    }
+                    if let Some(end_idx) = end_idx {
+                        idx = end_idx + 1;
+                    }
+                }
+            }
+
+            while idx < lines.len() {
+                let line = lines[idx];
                 if let Some((level, text, custom_id)) = __mdv_parse_atx_heading(line) {
                     __mdv_push_paragraph(&mut blocks, &mut para_lines);
                     if !text.trim().is_empty() {
@@ -1666,30 +1700,31 @@ fn runtime_helpers_tokens() -> TokenStream2 {
                             custom_id,
                         });
                     }
+                    idx += 1;
                     continue;
                 }
-                if !line.trim().is_empty() {
-                    if let Some(next) = lines.peek() {
-                        if let Some(level) = __mdv_setext_level(next) {
-                            let (text, custom_id) = __mdv_parse_heading_attrs(line);
-                            __mdv_push_paragraph(&mut blocks, &mut para_lines);
-                            if !text.trim().is_empty() {
-                                blocks.push(__MdvBlock::Heading {
-                                    level,
-                                    text,
-                                    custom_id,
-                                });
-                            }
-                            lines.next();
-                            continue;
+                if !line.trim().is_empty() && idx + 1 < lines.len() {
+                    if let Some(level) = __mdv_setext_level(lines[idx + 1]) {
+                        let (text, custom_id) = __mdv_parse_heading_attrs(line);
+                        __mdv_push_paragraph(&mut blocks, &mut para_lines);
+                        if !text.trim().is_empty() {
+                            blocks.push(__MdvBlock::Heading {
+                                level,
+                                text,
+                                custom_id,
+                            });
                         }
+                        idx += 2;
+                        continue;
                     }
                 }
                 if line.trim().is_empty() {
                     __mdv_push_paragraph(&mut blocks, &mut para_lines);
+                    idx += 1;
                     continue;
                 }
                 para_lines.push(line.to_string());
+                idx += 1;
             }
 
             __mdv_push_paragraph(&mut blocks, &mut para_lines);
@@ -1833,7 +1868,10 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 /// ```
 #[proc_macro]
 pub fn markdown_view(input: TokenStream) -> TokenStream {
-    let MacroArgs { source: parsed, anchor } = parse_macro_input!(input as MacroArgs);
+    let MacroArgs {
+        source: parsed,
+        anchor,
+    } = parse_macro_input!(input as MacroArgs);
 
     let anchor_enabled = anchor.enabled;
     let anchor_symbol_lit = LitStr::new(&anchor.symbol, Span::call_site());
@@ -1980,11 +2018,7 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
         .into_iter()
         .map(|seg| match seg {
             Segment::Markdown(md) => {
-                let html_output = convert_markdown_to_html_with_slugger(
-                    &md,
-                    &mut slugger,
-                    &anchor,
-                );
+                let html_output = convert_markdown_to_html_with_slugger(&md, &mut slugger, &anchor);
                 let literal = raw_string_literal_tokens(&html_output);
                 quote! { <div inner_html={#literal}></div> }
             }
@@ -2129,10 +2163,7 @@ pub fn markdown_anchors(input: TokenStream) -> TokenStream {
     let mut anchors: Vec<(String, String)> = Vec::new();
     for seg in segments {
         if let Segment::Markdown(md) = seg {
-            anchors.extend(collect_markdown_anchors_with_slugger(
-                &md,
-                &mut slugger,
-            ));
+            anchors.extend(collect_markdown_anchors_with_slugger(&md, &mut slugger));
         }
     }
 
@@ -2172,6 +2203,151 @@ pub fn markdown_anchors(input: TokenStream) -> TokenStream {
 mod tests {
     use super::*;
 
+    fn runtime_parse_heading_attrs(text: &str) -> (String, Option<String>) {
+        let trimmed = text.trim_end();
+        if let Some(start) = trimmed.rfind('{') {
+            if trimmed.ends_with('}') {
+                let attrs = &trimmed[start + 1..trimmed.len() - 1];
+                let mut custom_id: Option<String> = None;
+                let mut has_attr = false;
+                for part in attrs.split_whitespace() {
+                    if let Some(id) = part.strip_prefix('#') {
+                        if !id.is_empty() {
+                            custom_id = Some(id.to_string());
+                            has_attr = true;
+                            break;
+                        }
+                    } else if part.starts_with('.') || part.contains('=') {
+                        has_attr = true;
+                    }
+                }
+                if has_attr {
+                    let before = trimmed[..start].trim_end();
+                    return (before.to_string(), custom_id);
+                }
+            }
+        }
+        (trimmed.to_string(), None)
+    }
+
+    fn runtime_parse_atx_heading(line: &str) -> Option<(u8, String, Option<String>)> {
+        let trimmed = line.trim_start();
+        let mut level = 0usize;
+        for ch in trimmed.chars() {
+            if ch == '#' {
+                level += 1;
+            } else {
+                break;
+            }
+        }
+        if level == 0 || level > 6 {
+            return None;
+        }
+        let rest = trimmed[level..].trim_start();
+        let mut text = rest.trim_end();
+        if text.ends_with('#') {
+            let mut end = text.len();
+            while end > 0 && text.as_bytes()[end - 1] == b'#' {
+                end -= 1;
+            }
+            text = text[..end].trim_end();
+        }
+        let (clean_text, custom_id) = runtime_parse_heading_attrs(text);
+        Some((level as u8, clean_text, custom_id))
+    }
+
+    fn runtime_setext_level(line: &str) -> Option<u8> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        let mut chars = trimmed.chars();
+        let first = chars.next()?;
+        if first != '=' && first != '-' {
+            return None;
+        }
+        if chars.any(|c| c != first) {
+            return None;
+        }
+        Some(if first == '=' { 1 } else { 2 })
+    }
+
+    fn runtime_extract_anchors_for_test(markdown: &str) -> Vec<(String, String)> {
+        let lines: Vec<&str> = markdown
+            .lines()
+            .map(|line| line.trim_end_matches('\r'))
+            .collect();
+        let mut idx: usize = 0;
+
+        if let Some(first) = lines.first() {
+            let first_trimmed = first.trim();
+            if first_trimmed == "---" || first_trimmed == "+++" {
+                let mut end_idx = None;
+                for i in 1..lines.len() {
+                    if lines[i].trim() == first_trimmed {
+                        end_idx = Some(i);
+                        break;
+                    }
+                }
+                if let Some(end_idx) = end_idx {
+                    idx = end_idx + 1;
+                }
+            }
+        }
+
+        let mut anchors = Vec::new();
+        let mut slugger = AnchorSlugger::default();
+        while idx < lines.len() {
+            let line = lines[idx];
+            if let Some((_level, text, custom_id)) = runtime_parse_atx_heading(line) {
+                if !text.trim().is_empty() {
+                    let anchor_id = if let Some(id) = custom_id {
+                        slugger.register_custom(&id);
+                        Some(id)
+                    } else {
+                        let slug = slugger.slugify(&text);
+                        if slug.is_empty() {
+                            None
+                        } else {
+                            Some(slug)
+                        }
+                    };
+                    if let Some(id) = anchor_id {
+                        anchors.push((text.trim().to_string(), id));
+                    }
+                }
+                idx += 1;
+                continue;
+            }
+            if !line.trim().is_empty() && idx + 1 < lines.len() {
+                if runtime_setext_level(lines[idx + 1]).is_some() {
+                    let (text, custom_id) = runtime_parse_heading_attrs(line);
+                    if !text.trim().is_empty() {
+                        let anchor_id = if let Some(id) = custom_id {
+                            slugger.register_custom(&id);
+                            Some(id)
+                        } else {
+                            let slug = slugger.slugify(&text);
+                            if slug.is_empty() {
+                                None
+                            } else {
+                                Some(slug)
+                            }
+                        };
+                        if let Some(id) = anchor_id {
+                            anchors.push((text.trim().to_string(), id));
+                        }
+                    }
+                    idx += 2;
+                    continue;
+                }
+            }
+            idx += 1;
+        }
+
+        anchors
+    }
+
     #[test]
     fn convert_markdown_to_html_basic() {
         let html = convert_markdown_to_html("# Title\n\nSome **bold** text.");
@@ -2209,7 +2385,9 @@ mod tests {
     #[test]
     fn convert_markdown_custom_heading_anchor() {
         let html = convert_markdown_to_html("# Using custom anchors {#my-anchor}");
-        assert!(html.contains("<h1 id=\"my-anchor\"><a class=\"header-anchor\" href=\"#my-anchor\""));
+        assert!(
+            html.contains("<h1 id=\"my-anchor\"><a class=\"header-anchor\" href=\"#my-anchor\"")
+        );
         assert!(html.contains(">#</a>Using custom anchors</h1>"));
         assert!(!html.contains("{#my-anchor}"));
     }
@@ -2261,10 +2439,7 @@ mod tests {
     #[test]
     fn collect_markdown_anchors_heading_attributes() {
         let anchors = collect_markdown_anchors("# Title {#custom .fancy data-foo=bar}");
-        assert_eq!(
-            anchors,
-            vec![("Title".to_string(), "custom".to_string())]
-        );
+        assert_eq!(anchors, vec![("Title".to_string(), "custom".to_string())]);
     }
 
     #[test]
@@ -2278,6 +2453,40 @@ mod tests {
                 "ultimo-paragrafo".to_string()
             )]
         );
+    }
+
+    #[test]
+    fn runtime_anchors_ignore_yaml_front_matter() {
+        let md = [
+            "---",
+            "title: Um título imponente",
+            "date: 2025-03-13T04:00:00Z",
+            "lang: pt-br",
+            "duration: 1min",
+            "---",
+            "",
+            "No principio...",
+        ]
+        .join("\n");
+        let anchors = runtime_extract_anchors_for_test(&md);
+        assert!(anchors.is_empty(), "anchors: {:?}", anchors);
+    }
+
+    #[test]
+    fn runtime_anchors_ignore_toml_front_matter() {
+        let md = [
+            "+++",
+            "title = \"Um título imponente\"",
+            "date = 2025-03-13T04:00:00Z",
+            "lang = \"pt-br\"",
+            "duration = \"1min\"",
+            "+++",
+            "",
+            "No principio...",
+        ]
+        .join("\n");
+        let anchors = runtime_extract_anchors_for_test(&md);
+        assert!(anchors.is_empty(), "anchors: {:?}", anchors);
     }
 
     #[test]
@@ -2354,10 +2563,8 @@ mod tests {
 
     #[test]
     fn macro_accepts_url_format_with_literal_arg() {
-        let parsed: Source = syn::parse_str(
-            r#"url = format!("https://example.com/posts/{}", "slug")"#,
-        )
-        .unwrap();
+        let parsed: Source =
+            syn::parse_str(r#"url = format!("https://example.com/posts/{}", "slug")"#).unwrap();
         match parsed {
             Source::Url(lit) => {
                 assert_eq!(lit.value(), "https://example.com/posts/slug");
