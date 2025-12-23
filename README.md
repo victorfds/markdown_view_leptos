@@ -146,9 +146,14 @@ let view = markdown_view!(
     anchor = true,
     anchor_class = "my-anchor",
     anchor_style = "color: #f40;",
+    anchor_wrapper_class = "anchor-wrap",
+    anchor_wrapper_style = "display: inline-block;",
     anchor_symbol = "§"
 );
 ```
+
+`anchor_wrapper_class` and `anchor_wrapper_style` apply to a wrapper element around
+the anchor link for additional layout control.
 
 To disable anchor links (IDs still render for deep links):
 

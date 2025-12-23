@@ -287,6 +287,8 @@ struct AnchorRenderOptions {
     enabled: bool,
     class: Option<String>,
     style: Option<String>,
+    wrapper_class: Option<String>,
+    wrapper_style: Option<String>,
     symbol: String,
 }
 
@@ -296,6 +298,8 @@ impl Default for AnchorRenderOptions {
             enabled: true,
             class: Some("header-anchor".to_string()),
             style: None,
+            wrapper_class: None,
+            wrapper_style: None,
             symbol: "#".to_string(),
         }
     }
@@ -307,6 +311,29 @@ impl AnchorRenderOptions {
             return None;
         }
         let mut html = String::new();
+        let wrapper_class = self
+            .wrapper_class
+            .as_ref()
+            .filter(|class| !class.is_empty());
+        let wrapper_style = self
+            .wrapper_style
+            .as_ref()
+            .filter(|style| !style.is_empty());
+        let use_wrapper = wrapper_class.is_some() || wrapper_style.is_some();
+        if use_wrapper {
+            html.push_str("<span");
+            if let Some(class) = wrapper_class {
+                html.push_str(" class=\"");
+                html.push_str(&escape_html_attr(class));
+                html.push('"');
+            }
+            if let Some(style) = wrapper_style {
+                html.push_str(" style=\"");
+                html.push_str(&escape_html_attr(style));
+                html.push('"');
+            }
+            html.push('>');
+        }
         html.push_str("<a");
         if let Some(class) = &self.class {
             if !class.is_empty() {
@@ -327,6 +354,9 @@ impl AnchorRenderOptions {
         html.push_str("\" aria-hidden=\"true\">");
         html.push_str(&escape_html_attr(&self.symbol));
         html.push_str("</a>");
+        if use_wrapper {
+            html.push_str("</span>");
+        }
         Some(html)
     }
 }
@@ -1290,6 +1320,8 @@ impl Parse for MacroArgs {
         let mut anchor_enabled: Option<bool> = None;
         let mut anchor_class: Option<String> = None;
         let mut anchor_style: Option<String> = None;
+        let mut anchor_wrapper_class: Option<String> = None;
+        let mut anchor_wrapper_style: Option<String> = None;
         let mut anchor_symbol: Option<String> = None;
 
         if input.is_empty() {
@@ -1323,13 +1355,21 @@ impl Parse for MacroArgs {
                     let lit: LitStr = input.parse()?;
                     anchor_style = Some(lit.value());
                 }
+                "anchor_wrapper_class" => {
+                    let lit: LitStr = input.parse()?;
+                    anchor_wrapper_class = Some(lit.value());
+                }
+                "anchor_wrapper_style" => {
+                    let lit: LitStr = input.parse()?;
+                    anchor_wrapper_style = Some(lit.value());
+                }
                 "anchor_symbol" => {
                     let lit: LitStr = input.parse()?;
                     anchor_symbol = Some(lit.value());
                 }
                 _ => {
                     return Err(input.error(
-                        "markdown_view!: expected `anchor`, `anchor_class`, `anchor_style`, or `anchor_symbol`",
+                        "markdown_view!: expected `anchor`, `anchor_class`, `anchor_style`, `anchor_wrapper_class`, `anchor_wrapper_style`, or `anchor_symbol`",
                     ))
                 }
             }
@@ -1349,6 +1389,20 @@ impl Parse for MacroArgs {
         if let Some(style) = anchor_style {
             anchor.style = if style.is_empty() { None } else { Some(style) };
         }
+        if let Some(wrapper_class) = anchor_wrapper_class {
+            anchor.wrapper_class = if wrapper_class.is_empty() {
+                None
+            } else {
+                Some(wrapper_class)
+            };
+        }
+        if let Some(wrapper_style) = anchor_wrapper_style {
+            anchor.wrapper_style = if wrapper_style.is_empty() {
+                None
+            } else {
+                Some(wrapper_style)
+            };
+        }
         if let Some(symbol) = anchor_symbol {
             anchor.symbol = symbol;
         }
@@ -1364,6 +1418,8 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             enabled: bool,
             class: Option<&'static str>,
             style: Option<&'static str>,
+            wrapper_class: Option<&'static str>,
+            wrapper_style: Option<&'static str>,
             symbol: &'static str,
         }
         const __MDV_TOC_MARKER: &str = "[[toc]]";
@@ -1396,6 +1452,23 @@ fn runtime_helpers_tokens() -> TokenStream2 {
                 return None;
             }
             let mut html = String::new();
+            let wrapper_class = options.wrapper_class.filter(|class| !class.is_empty());
+            let wrapper_style = options.wrapper_style.filter(|style| !style.is_empty());
+            let use_wrapper = wrapper_class.is_some() || wrapper_style.is_some();
+            if use_wrapper {
+                html.push_str("<span");
+                if let Some(class) = wrapper_class {
+                    html.push_str(" class=\"");
+                    html.push_str(&__mdv_escape_html(class));
+                    html.push('"');
+                }
+                if let Some(style) = wrapper_style {
+                    html.push_str(" style=\"");
+                    html.push_str(&__mdv_escape_html(style));
+                    html.push('"');
+                }
+                html.push('>');
+            }
             html.push_str("<a");
             if let Some(class) = options.class {
                 if !class.is_empty() {
@@ -1416,6 +1489,9 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             html.push_str("\" aria-hidden=\"true\">");
             html.push_str(&__mdv_escape_html(options.symbol));
             html.push_str("</a>");
+            if use_wrapper {
+                html.push_str("</span>");
+            }
             Some(html)
         }
         fn __mdv_is_combining_mark(ch: char) -> bool {
@@ -1882,6 +1958,8 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 /// - `anchor = true/false,`: enable/disable heading anchor links (IDs are still generated).
 /// - `anchor_class = "...",`: override the CSS class for heading anchors.
 /// - `anchor_style = "...",`: set inline styles for heading anchors.
+/// - `anchor_wrapper_class = "...",`: set a CSS class on the anchor wrapper element.
+/// - `anchor_wrapper_style = "...",`: set inline styles on the anchor wrapper element.
 /// - `anchor_symbol = "...",`: set the text shown for the anchor link.
 ///
 /// Minimal examples:
@@ -1919,11 +1997,27 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
         }
         None => quote! { None },
     };
+    let anchor_wrapper_class_tokens = match anchor.wrapper_class.as_ref() {
+        Some(class) => {
+            let lit = LitStr::new(class, Span::call_site());
+            quote! { Some(#lit) }
+        }
+        None => quote! { None },
+    };
+    let anchor_wrapper_style_tokens = match anchor.wrapper_style.as_ref() {
+        Some(style) => {
+            let lit = LitStr::new(style, Span::call_site());
+            quote! { Some(#lit) }
+        }
+        None => quote! { None },
+    };
     let anchor_options_tokens = quote! {
         __MdvAnchorOptions {
             enabled: #anchor_enabled,
             class: #anchor_class_tokens,
             style: #anchor_style_tokens,
+            wrapper_class: #anchor_wrapper_class_tokens,
+            wrapper_style: #anchor_wrapper_style_tokens,
             symbol: #anchor_symbol_lit,
         }
     };
@@ -2446,12 +2540,16 @@ mod tests {
             enabled: true,
             class: Some("my-anchor".to_string()),
             style: Some("color: #f40;".to_string()),
+            wrapper_class: Some("anchor-wrap".to_string()),
+            wrapper_style: Some("display: inline-block;".to_string()),
             symbol: "§".to_string(),
         };
         let html = convert_markdown_to_html_with_slugger("# Title", &mut slugger, &anchor_options);
+        assert!(html.contains("class=\"anchor-wrap\""));
+        assert!(html.contains("style=\"display: inline-block;\""));
         assert!(html.contains("class=\"my-anchor\""));
         assert!(html.contains("style=\"color: #f40;\""));
-        assert!(html.contains(">§</a>Title</h1>"));
+        assert!(html.contains(">§</a></span>Title</h1>"));
     }
 
     #[test]
