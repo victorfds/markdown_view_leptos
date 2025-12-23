@@ -152,8 +152,8 @@ let view = markdown_view!(
 );
 ```
 
-`anchor_wrapper_class` and `anchor_wrapper_style` apply to a wrapper `div` around
-the anchor link for additional layout control.
+`anchor_wrapper_class` and `anchor_wrapper_style` apply to the heading element
+that wraps the anchor link for additional layout control.
 
 To disable anchor links (IDs still render for deep links):
 

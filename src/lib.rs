@@ -311,29 +311,6 @@ impl AnchorRenderOptions {
             return None;
         }
         let mut html = String::new();
-        let wrapper_class = self
-            .wrapper_class
-            .as_ref()
-            .filter(|class| !class.is_empty());
-        let wrapper_style = self
-            .wrapper_style
-            .as_ref()
-            .filter(|style| !style.is_empty());
-        let use_wrapper = wrapper_class.is_some() || wrapper_style.is_some();
-        if use_wrapper {
-            html.push_str("<div");
-            if let Some(class) = wrapper_class {
-                html.push_str(" class=\"");
-                html.push_str(&escape_html_attr(class));
-                html.push('"');
-            }
-            if let Some(style) = wrapper_style {
-                html.push_str(" style=\"");
-                html.push_str(&escape_html_attr(style));
-                html.push('"');
-            }
-            html.push('>');
-        }
         html.push_str("<a");
         if let Some(class) = &self.class {
             if !class.is_empty() {
@@ -354,9 +331,6 @@ impl AnchorRenderOptions {
         html.push_str("\" aria-hidden=\"true\">");
         html.push_str(&escape_html_attr(&self.symbol));
         html.push_str("</a>");
-        if use_wrapper {
-            html.push_str("</div>");
-        }
         Some(html)
     }
 }
@@ -466,9 +440,44 @@ fn convert_markdown_to_html_with_slugger(
             Event::Start(Tag::Heading {
                 level,
                 id,
-                classes,
-                attrs,
+                mut classes,
+                mut attrs,
             }) => {
+                if let Some(wrapper_class) = anchor_options
+                    .wrapper_class
+                    .as_ref()
+                    .filter(|class| !class.is_empty())
+                {
+                    classes.push(CowStr::from(wrapper_class.clone()));
+                }
+                if let Some(wrapper_style) = anchor_options
+                    .wrapper_style
+                    .as_ref()
+                    .filter(|style| !style.is_empty())
+                {
+                    if let Some((_, value)) = attrs
+                        .iter_mut()
+                        .find(|(name, _)| name.as_ref() == "style")
+                    {
+                        let mut merged = value
+                            .as_ref()
+                            .map(|val| val.to_string())
+                            .unwrap_or_default();
+                        if !merged.trim().is_empty() {
+                            if !merged.trim_end().ends_with(';') {
+                                merged.push(';');
+                            }
+                            merged.push(' ');
+                        }
+                        merged.push_str(wrapper_style);
+                        *value = Some(CowStr::from(merged));
+                    } else {
+                        attrs.push((
+                            CowStr::from("style"),
+                            Some(CowStr::from(wrapper_style.clone())),
+                        ));
+                    }
+                }
                 let mut inner_events: Vec<Event<'_>> = Vec::new();
                 while let Some(inner) = iter.next() {
                     if matches!(inner, Event::End(TagEnd::Heading(_))) {
@@ -1452,23 +1461,6 @@ fn runtime_helpers_tokens() -> TokenStream2 {
                 return None;
             }
             let mut html = String::new();
-            let wrapper_class = options.wrapper_class.filter(|class| !class.is_empty());
-            let wrapper_style = options.wrapper_style.filter(|style| !style.is_empty());
-            let use_wrapper = wrapper_class.is_some() || wrapper_style.is_some();
-            if use_wrapper {
-                html.push_str("<div");
-                if let Some(class) = wrapper_class {
-                    html.push_str(" class=\"");
-                    html.push_str(&__mdv_escape_html(class));
-                    html.push('"');
-                }
-                if let Some(style) = wrapper_style {
-                    html.push_str(" style=\"");
-                    html.push_str(&__mdv_escape_html(style));
-                    html.push('"');
-                }
-                html.push('>');
-            }
             html.push_str("<a");
             if let Some(class) = options.class {
                 if !class.is_empty() {
@@ -1489,9 +1481,6 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             html.push_str("\" aria-hidden=\"true\">");
             html.push_str(&__mdv_escape_html(options.symbol));
             html.push_str("</a>");
-            if use_wrapper {
-                html.push_str("</div>");
-            }
             Some(html)
         }
         fn __mdv_is_combining_mark(ch: char) -> bool {
@@ -1864,6 +1853,20 @@ fn runtime_helpers_tokens() -> TokenStream2 {
                             html_output.push_str(&__mdv_escape_html(id));
                             html_output.push('"');
                         }
+                        if let Some(class) = anchor_options.wrapper_class {
+                            if !class.is_empty() {
+                                html_output.push_str(" class=\"");
+                                html_output.push_str(&__mdv_escape_html(class));
+                                html_output.push('"');
+                            }
+                        }
+                        if let Some(style) = anchor_options.wrapper_style {
+                            if !style.is_empty() {
+                                html_output.push_str(" style=\"");
+                                html_output.push_str(&__mdv_escape_html(style));
+                                html_output.push('"');
+                            }
+                        }
                         html_output.push('>');
                         if let Some(id) = anchor_id.as_ref() {
                             if let Some(anchor_html) = __mdv_render_anchor_html(id, anchor_options) {
@@ -1958,8 +1961,8 @@ fn runtime_helpers_tokens() -> TokenStream2 {
 /// - `anchor = true/false,`: enable/disable heading anchor links (IDs are still generated).
 /// - `anchor_class = "...",`: override the CSS class for heading anchors.
 /// - `anchor_style = "...",`: set inline styles for heading anchors.
-/// - `anchor_wrapper_class = "...",`: set a CSS class on the anchor wrapper element.
-/// - `anchor_wrapper_style = "...",`: set inline styles on the anchor wrapper element.
+/// - `anchor_wrapper_class = "...",`: add a CSS class on the heading wrapper element.
+/// - `anchor_wrapper_style = "...",`: add inline styles on the heading wrapper element.
 /// - `anchor_symbol = "...",`: set the text shown for the anchor link.
 ///
 /// Minimal examples:
@@ -2549,7 +2552,7 @@ mod tests {
         assert!(html.contains("style=\"display: inline-block;\""));
         assert!(html.contains("class=\"my-anchor\""));
         assert!(html.contains("style=\"color: #f40;\""));
-        assert!(html.contains(">§</a></div>Title</h1>"));
+        assert!(html.contains(">§</a>Title</h1>"));
     }
 
     #[test]
