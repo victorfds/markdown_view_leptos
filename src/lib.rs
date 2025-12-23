@@ -73,6 +73,20 @@ fn is_rust_analyzer() -> bool {
         || env::var_os("RUST_ANALYZER").is_some()
 }
 
+const TOC_MARKER: &str = "[[toc]]";
+
+fn has_toc_marker(markdown: &str) -> bool {
+    markdown.contains(TOC_MARKER)
+}
+
+fn strip_toc_marker<'a>(markdown: &'a str) -> std::borrow::Cow<'a, str> {
+    if markdown.contains(TOC_MARKER) {
+        std::borrow::Cow::Owned(markdown.replace(TOC_MARKER, ""))
+    } else {
+        std::borrow::Cow::Borrowed(markdown)
+    }
+}
+
 #[derive(Default)]
 struct AnchorSlugger {
     counts: HashMap<String, usize>,
@@ -1352,6 +1366,17 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             style: Option<&'static str>,
             symbol: &'static str,
         }
+        const __MDV_TOC_MARKER: &str = "[[toc]]";
+        fn __mdv_has_toc_marker(markdown: &str) -> bool {
+            markdown.contains(__MDV_TOC_MARKER)
+        }
+        fn __mdv_strip_toc_marker<'a>(markdown: &'a str) -> ::std::borrow::Cow<'a, str> {
+            if markdown.contains(__MDV_TOC_MARKER) {
+                ::std::borrow::Cow::Owned(markdown.replace(__MDV_TOC_MARKER, ""))
+            } else {
+                ::std::borrow::Cow::Borrowed(markdown)
+            }
+        }
         fn __mdv_escape_html(input: &str) -> String {
             let mut escaped = String::with_capacity(input.len());
             for ch in input.chars() {
@@ -1735,6 +1760,8 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             anchor_options: __MdvAnchorOptions,
         ) -> String {
             let markdown = markdown.as_ref();
+            let cleaned = __mdv_strip_toc_marker(markdown);
+            let markdown = cleaned.as_ref();
             if markdown.trim().is_empty() {
                 return String::new();
             }
@@ -1789,6 +1816,9 @@ fn runtime_helpers_tokens() -> TokenStream2 {
         ) -> ::std::vec::Vec<(::std::string::String, ::std::string::String)> {
             let markdown = markdown.as_ref();
             if markdown.trim().is_empty() {
+                return ::std::vec::Vec::new();
+            }
+            if !__mdv_has_toc_marker(markdown) {
                 return ::std::vec::Vec::new();
             }
             let mut anchors: ::std::vec::Vec<(::std::string::String, ::std::string::String)> =
@@ -2016,13 +2046,20 @@ pub fn markdown_view(input: TokenStream) -> TokenStream {
 
     let parts: Vec<TokenStream2> = segments
         .into_iter()
-        .map(|seg| match seg {
+        .filter_map(|seg| match seg {
             Segment::Markdown(md) => {
-                let html_output = convert_markdown_to_html_with_slugger(&md, &mut slugger, &anchor);
-                let literal = raw_string_literal_tokens(&html_output);
-                quote! { <div inner_html={#literal}></div> }
+                let cleaned = strip_toc_marker(&md);
+                let cleaned_md = cleaned.as_ref();
+                if cleaned_md.trim().is_empty() {
+                    None
+                } else {
+                    let html_output =
+                        convert_markdown_to_html_with_slugger(cleaned_md, &mut slugger, &anchor);
+                    let literal = raw_string_literal_tokens(&html_output);
+                    Some(quote! { <div inner_html={#literal}></div> })
+                }
             }
-            Segment::Component(ts) => quote! { #ts },
+            Segment::Component(ts) => Some(quote! { #ts }),
         })
         .collect();
 
@@ -2158,12 +2195,14 @@ pub fn markdown_anchors(input: TokenStream) -> TokenStream {
         }
     };
 
-    let segments = split_markdown_with_components(&markdown_source);
-    let mut slugger = AnchorSlugger::default();
     let mut anchors: Vec<(String, String)> = Vec::new();
-    for seg in segments {
-        if let Segment::Markdown(md) = seg {
-            anchors.extend(collect_markdown_anchors_with_slugger(&md, &mut slugger));
+    if has_toc_marker(&markdown_source) {
+        let segments = split_markdown_with_components(&markdown_source);
+        let mut slugger = AnchorSlugger::default();
+        for seg in segments {
+            if let Segment::Markdown(md) = seg {
+                anchors.extend(collect_markdown_anchors_with_slugger(&md, &mut slugger));
+            }
         }
     }
 
@@ -2413,6 +2452,47 @@ mod tests {
         assert!(html.contains("class=\"my-anchor\""));
         assert!(html.contains("style=\"color: #f40;\""));
         assert!(html.contains(">§</a>Title</h1>"));
+    }
+
+    #[test]
+    fn markdown_view_strips_toc_marker() {
+        let input = "[[toc]]\n# Title";
+        let cleaned = strip_toc_marker(input);
+        let mut slugger = AnchorSlugger::default();
+        let anchor_options = AnchorRenderOptions::default();
+        let html = convert_markdown_to_html_with_slugger(cleaned.as_ref(), &mut slugger, &anchor_options);
+        assert!(!html.contains("[[toc]]"));
+        assert!(html.contains("Title"));
+    }
+
+    fn collect_anchors_for_toc(markdown: &str) -> Vec<(String, String)> {
+        if !has_toc_marker(markdown) {
+            return Vec::new();
+        }
+        let segments = split_markdown_with_components(markdown);
+        let mut slugger = AnchorSlugger::default();
+        let mut anchors = Vec::new();
+        for seg in segments {
+            if let Segment::Markdown(md) = seg {
+                anchors.extend(collect_markdown_anchors_with_slugger(&md, &mut slugger));
+            }
+        }
+        anchors
+    }
+
+    #[test]
+    fn markdown_anchors_returns_when_toc_present() {
+        let anchors = collect_anchors_for_toc("[[toc]]\n# Title");
+        assert_eq!(
+            anchors,
+            vec![("Title".to_string(), "title".to_string())]
+        );
+    }
+
+    #[test]
+    fn markdown_anchors_empty_without_toc() {
+        let anchors = collect_anchors_for_toc("# Title");
+        assert!(anchors.is_empty());
     }
 
     #[test]

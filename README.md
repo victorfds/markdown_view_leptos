@@ -44,8 +44,22 @@ And some text after.
 }
 ```
 
+## Macro inputs
+
+Both `markdown_view!` and `markdown_anchors!` accept the same input forms:
+
+- Inline string literals (`"..."`, `r#"..."#`, `String::from("...")`, `"...".to_string()`).
+- `file = "path.md"`: resolved at compile time relative to `CARGO_MANIFEST_DIR`.
+- `file = <expr>`: resolved at compile time if the file exists; otherwise read at runtime
+  (non-wasm only).
+- `url = "https://..."`: fetched at compile time (disabled in rust-analyzer). If the URL
+  expression cannot be resolved to a literal, the macro treats it like a dynamic
+  Markdown string expression.
+- Any other expression (`String`/`&str`): handled at runtime.
+
 ### Inline string
 Works with normal or raw strings; inline `{{ ... }}` components are spliced in.
+The same inline forms work with `markdown_anchors!`.
 
 ```rust
 use leptos::prelude::*;
@@ -61,6 +75,8 @@ pub fn App() -> impl IntoView {
 `file` paths are resolved relative to your crate root (`CARGO_MANIFEST_DIR`). Literal paths are embedded at compile time so edits trigger recompiles.
 
 You can also point to a variable. If the macro can resolve it at compile time (e.g., `let content = "content.md";` or `format!("content.md")` where the file exists), it behaves like a literal path. Otherwise it falls back to reading at runtime (non-wasm only) and inline components are not expanded.
+
+`markdown_anchors!` accepts the same `file = ...` forms.
 
 ```rust
 let base = "/opt/articles";
@@ -89,7 +105,9 @@ If the macro can see a string literal binding in the same file (as with `body` a
 it inlines it so `{{ ... }}` components still render. Otherwise Markdown is rendered
 at runtime and `{{ ... }}` blocks stay literal text.
 
-## From a URL (build‑time fetch)
+`markdown_anchors!` uses the same runtime path for dynamic strings.
+
+### From a URL (build-time fetch)
 
 ```rust
 use leptos::prelude::*;
@@ -106,6 +124,8 @@ pub fn App() -> impl IntoView {
 - For editor tooling (rust‑analyzer), remote fetch is disabled and a small placeholder is returned for responsiveness.
 - Remote fetch happens at build time on non‑wasm targets (blocking HTTP GET). rust‑analyzer and wasm builds get a placeholder for responsiveness. Network errors fall back to a placeholder; otherwise the fetched content is embedded.
 - Prefer `file = "..."` for reproducible builds.
+
+`markdown_anchors!` accepts the same `url = ...` forms.
 
 ## How it works
 
@@ -182,7 +202,11 @@ let toc = anchors
     .collect::<String>();
 ```
 
-When you pass a dynamic string expression to `markdown_anchors!`, the runtime path uses the lightweight parser and honors `{#id}` (other heading attributes are ignored).
+`markdown_anchors!` only returns anchors when the input contains `[[toc]]`. The marker
+is stripped from `markdown_view!` output and never rendered.
+
+When you pass a dynamic string expression to `markdown_anchors!`, the runtime path
+uses the lightweight parser and honors `{#id}` (other heading attributes are ignored).
 
 ## Example
 

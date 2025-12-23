@@ -1,6 +1,6 @@
 [package]
 name = "markdown_view_leptos"
-version = "0.1.88"
+version = "0.1.89"
 edition = "2021"
 description = "Render Markdown with embedded Leptos components via a simple macro (MDX-like for Leptos)."
 license = "MIT"
