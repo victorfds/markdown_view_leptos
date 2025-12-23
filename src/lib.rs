@@ -321,7 +321,7 @@ impl AnchorRenderOptions {
             .filter(|style| !style.is_empty());
         let use_wrapper = wrapper_class.is_some() || wrapper_style.is_some();
         if use_wrapper {
-            html.push_str("<span");
+            html.push_str("<div");
             if let Some(class) = wrapper_class {
                 html.push_str(" class=\"");
                 html.push_str(&escape_html_attr(class));
@@ -355,7 +355,7 @@ impl AnchorRenderOptions {
         html.push_str(&escape_html_attr(&self.symbol));
         html.push_str("</a>");
         if use_wrapper {
-            html.push_str("</span>");
+            html.push_str("</div>");
         }
         Some(html)
     }
@@ -1456,7 +1456,7 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             let wrapper_style = options.wrapper_style.filter(|style| !style.is_empty());
             let use_wrapper = wrapper_class.is_some() || wrapper_style.is_some();
             if use_wrapper {
-                html.push_str("<span");
+                html.push_str("<div");
                 if let Some(class) = wrapper_class {
                     html.push_str(" class=\"");
                     html.push_str(&__mdv_escape_html(class));
@@ -1490,7 +1490,7 @@ fn runtime_helpers_tokens() -> TokenStream2 {
             html.push_str(&__mdv_escape_html(options.symbol));
             html.push_str("</a>");
             if use_wrapper {
-                html.push_str("</span>");
+                html.push_str("</div>");
             }
             Some(html)
         }
@@ -2549,7 +2549,7 @@ mod tests {
         assert!(html.contains("style=\"display: inline-block;\""));
         assert!(html.contains("class=\"my-anchor\""));
         assert!(html.contains("style=\"color: #f40;\""));
-        assert!(html.contains(">§</a></span>Title</h1>"));
+        assert!(html.contains(">§</a></div>Title</h1>"));
     }
 
     #[test]
